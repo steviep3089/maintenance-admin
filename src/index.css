@@ -1,0 +1,26 @@
+/* ---- Global reset / base layout ---- */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+    sans-serif;
+  background-color: #f5f7fb; /* same light grey as the app background */
+}
+
+/* Let React control the layout; no max-width or centering here */
+#root {
+  height: 100%;
+}
