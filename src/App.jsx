@@ -916,6 +916,9 @@ function DefectsPage() {
           )}
         </div>
       </main>
+      <footer style={{ textAlign: "center", padding: "20px", color: "#999", fontSize: 12 }}>
+        Admin Portal v1.0
+      </footer>
     </div>
   );
 }
@@ -1115,6 +1118,9 @@ function LoginPage() {
             {loading ? "Signing in..." : "Sign In"}
           </button>
         </form>
+        <div style={{ marginTop: 16, textAlign: "center", color: "#999", fontSize: 12 }}>
+          v1.0
+        </div>
       </div>
     </div>
   );
