@@ -383,6 +383,9 @@ function DefectsPage() {
 
       const newStatus = state.status || "Reported";
       const newLocked = newStatus === "Completed";
+      
+      // Set closed_out timestamp when completing
+      const closedOut = newLocked && !defect.closed_out ? new Date().toISOString() : defect.closed_out;
 
       const { error: updateError } = await supabase
         .from("defects")
@@ -393,6 +396,7 @@ function DefectsPage() {
           photo_urls: updatedDefectPhotos,
           repair_photos: updatedRepairPhotos,
           locked: newLocked,
+          closed_out: closedOut,
         })
         .eq("id", id);
 
@@ -558,6 +562,7 @@ function DefectsPage() {
                   <th>Status</th>
                   <th>Submitted By</th>
                   <th>Submitted At</th>
+                  <th>Closed Out</th>
                 </tr>
               </thead>
               <tbody>
@@ -591,12 +596,13 @@ function DefectsPage() {
                         </td>
                         <td>{d.submitted_by}</td>
                         <td>{formatDateTime(d.created_at)}</td>
+                        <td>{d.closed_out ? formatDateTime(d.closed_out) : "—"}</td>
                       </tr>
 
                       {/* DETAILS ROW */}
                       {isExpanded && (
                         <tr className="details-row">
-                          <td colSpan={7}>
+                          <td colSpan={8}>
                             <div className="details-panel">
                               <div className="details-header">
                                 <div>
