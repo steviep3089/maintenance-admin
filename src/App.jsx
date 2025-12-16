@@ -2,6 +2,17 @@
 import React, { useEffect, useState } from "react";
 import { supabase } from "./supabaseClient";
 import "./App.css";
+import html2pdf from 'html2pdf.js';
+
+/* ===========================
+   GOOGLE DRIVE CONFIG
+   =========================== */
+
+// TODO: Replace these with your actual Google Cloud credentials
+const GOOGLE_CLIENT_ID = '753101804798-4pv1u6geld4sopu80pkam786ritibrdc.apps.googleusercontent.com';
+const GOOGLE_API_KEY = 'AIzaSyD0Zkxx3q8-eONpOHWsvFjjLupEYQu7ytI';
+const GOOGLE_DRIVE_FOLDER_ID = '1Zc04BOCmdTubDptvNvldcWBX6iegQ619';
+const SCOPES = 'https://www.googleapis.com/auth/drive';
 
 /* ===========================
    HELPERS
@@ -196,12 +207,13 @@ function DefectsPage() {
   const [expandedIds, setExpandedIds] = useState([]);
   const [editState, setEditState] = useState({});
   const [activityLogs, setActivityLogs] = useState({});
+  const [selectedDefectForReport, setSelectedDefectForReport] = useState(null);
 
   async function loadDefects() {
+    setLoading(true);
+    setError("");
+    
     try {
-      setLoading(true);
-      setError("");
-
       const { data, error } = await supabase
         .from("defects")
         .select("*")
@@ -218,14 +230,252 @@ function DefectsPage() {
       console.error(err);
       setError("Unexpected error while loading defects.");
       setDefects([]);
-    } finally {
-      setLoading(false);
     }
+    
+    setLoading(false);
   }
 
   useEffect(() => {
     loadDefects();
   }, []);
+
+  // Upload PDF to Google Drive using new Google Identity Services
+  async function uploadToGoogleDrive(pdfBlob, filename) {
+    try {
+      return new Promise((resolve, reject) => {
+        // Request access token using new Google Identity Services
+        const tokenClient = google.accounts.oauth2.initTokenClient({
+          client_id: GOOGLE_CLIENT_ID,
+          scope: SCOPES,
+          callback: async (response) => {
+            if (response.error) {
+              reject(new Error(response.error));
+              return;
+            }
+
+            const accessToken = response.access_token;
+
+            // Support for Shared Drives (Team Drives)
+            const metadata = {
+              name: filename,
+              mimeType: 'application/pdf',
+              parents: [GOOGLE_DRIVE_FOLDER_ID]
+            };
+
+            const form = new FormData();
+            form.append('metadata', new Blob([JSON.stringify(metadata)], { type: 'application/json' }));
+            form.append('file', pdfBlob);
+
+            // Add supportsAllDrives=true for Shared Drive support
+            const uploadResponse = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&supportsAllDrives=true', {
+              method: 'POST',
+              headers: new Headers({ 'Authorization': 'Bearer ' + accessToken }),
+              body: form,
+            });
+
+            const result = await uploadResponse.json();
+            
+            if (uploadResponse.ok) {
+              console.log('File uploaded to Google Drive:', result);
+              resolve(result);
+            } else {
+              reject(new Error(result.error?.message || 'Upload failed'));
+            }
+          },
+        });
+
+        // Request the token (this will show Google sign-in popup)
+        tokenClient.requestAccessToken();
+      });
+    } catch (error) {
+      console.error('Error uploading to Google Drive:', error);
+      throw error;
+    }
+  }
+
+  async function sendReportEmail(defect) {
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) {
+        alert("Could not get user email");
+        return;
+      }
+
+      alert("Generating PDF... This may take a moment.");
+
+      // Get the report content element
+      const reportElement = document.getElementById('report-content');
+      if (!reportElement) {
+        alert("Report content not found");
+        return;
+      }
+
+      // Clone the report element to avoid modifying the original
+      const clonedElement = reportElement.cloneNode(true);
+      
+      // Convert all images to base64 data URLs
+      const images = clonedElement.getElementsByTagName('img');
+      const imagePromises = [];
+      
+      for (let i = 0; i < images.length; i++) {
+        const img = images[i];
+        const src = img.src;
+        
+        // Skip if already a data URL
+        if (src.startsWith('data:')) continue;
+        
+        // Fetch and convert to base64
+        const promise = fetch(src)
+          .then(response => response.blob())
+          .then(blob => {
+            return new Promise((resolve) => {
+              const reader = new FileReader();
+              reader.onloadend = () => {
+                img.src = reader.result;
+                resolve();
+              };
+              reader.readAsDataURL(blob);
+            });
+          })
+          .catch(err => {
+            console.error('Error loading image:', src, err);
+          });
+        
+        imagePromises.push(promise);
+      }
+      
+      // Wait for all images to be converted
+      await Promise.all(imagePromises);
+
+      // Generate PDF as blob
+      const opt = {
+        margin: 12,
+        filename: `defect-report-${defect.asset}-${Date.now()}.pdf`,
+        image: { type: 'jpeg', quality: 0.98 },
+        html2canvas: { 
+          scale: 2,
+          useCORS: true,
+          logging: false
+        },
+        jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
+      };
+
+      // Generate PDF from cloned element with embedded images
+      const pdfBlob = await html2pdf().set(opt).from(clonedElement).outputPdf('blob');
+      
+      // Convert blob to base64
+      const reader = new FileReader();
+      const base64Promise = new Promise((resolve) => {
+        reader.onloadend = () => {
+          const base64 = reader.result.split(',')[1];
+          resolve(base64);
+        };
+        reader.readAsDataURL(pdfBlob);
+      });
+
+      const pdfBase64 = await base64Promise;
+      const filename = `Defect-Report-${defect.asset}.pdf`;
+
+      console.log("Sending email with PDF to:", user.email);
+
+      // Call Supabase function to send email with PDF attachment
+      const { data, error } = await supabase.functions.invoke('send-report-email', {
+        body: {
+          to: user.email,
+          subject: `Defect Report: ${defect.asset} - ${defect.title}`,
+          pdfBase64: pdfBase64,
+          filename: filename
+        }
+      });
+
+      console.log("Response data:", data);
+      console.log("Response error:", error);
+
+      if (error) {
+        console.error("Email send error:", error);
+        alert(`Failed to send email:\n\n${error.message || JSON.stringify(error)}\n\nCheck browser console for details.`);
+      } else {
+        alert(`Report PDF emailed successfully to ${user.email}`);
+      }
+    } catch (err) {
+      console.error("Email error:", err);
+      alert(`Error: ${err.message}\n\nCheck browser console for details.`);
+    }
+  }
+
+  async function saveToDrive(defect) {
+    try {
+      alert("Generating PDF for Google Drive... This may take a moment.");
+
+      // Get the report content element
+      const reportElement = document.getElementById('report-content');
+      if (!reportElement) {
+        alert("Report content not found");
+        return;
+      }
+
+      // Clone the report element to avoid modifying the original
+      const clonedElement = reportElement.cloneNode(true);
+      
+      // Convert all images to base64 data URLs
+      const images = clonedElement.getElementsByTagName('img');
+      const imagePromises = [];
+      
+      for (let i = 0; i < images.length; i++) {
+        const img = images[i];
+        const src = img.src;
+        
+        // Skip if already a data URL
+        if (src.startsWith('data:')) continue;
+        
+        // Fetch and convert to base64
+        const promise = fetch(src)
+          .then(response => response.blob())
+          .then(blob => {
+            return new Promise((resolve) => {
+              const reader = new FileReader();
+              reader.onloadend = () => {
+                img.src = reader.result;
+                resolve();
+              };
+              reader.readAsDataURL(blob);
+            });
+          })
+          .catch(err => {
+            console.error('Error loading image:', src, err);
+          });
+        
+        imagePromises.push(promise);
+      }
+      
+      // Wait for all images to be converted
+      await Promise.all(imagePromises);
+
+      // Generate PDF as blob
+      const opt = {
+        margin: 12,
+        filename: `defect-report-${defect.asset}-${Date.now()}.pdf`,
+        image: { type: 'jpeg', quality: 0.98 },
+        html2canvas: { 
+          scale: 2,
+          useCORS: true,
+          logging: false
+        },
+        jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
+      };
+
+      // Generate PDF from cloned element with embedded images
+      const pdfBlob = await html2pdf().set(opt).from(clonedElement).outputPdf('blob');
+      const filename = `Defect-Report-${defect.asset}.pdf`;
+
+      console.log("Uploading PDF to Google Drive...");
+      await uploadToGoogleDrive(pdfBlob, filename);
+      alert(`Report PDF saved to Google Drive successfully!`);
+    } catch (err) {
+      console.error("Google Drive save error:", err);
+      alert(`Error saving to Google Drive: ${err.message}\n\nCheck browser console for details.`);
+    }
+  }
 
   async function loadActivity(defectId) {
     try {
@@ -516,32 +766,61 @@ function DefectsPage() {
           {error && <div className="error-banner">{error}</div>}
 
           {/* Filters */}
-          <div className="filters-row">
-            <div className="filter-group">
-              <label htmlFor="statusFilter">Status:</label>
-              <select
-                id="statusFilter"
-                value={statusFilter}
-                onChange={(e) => setStatusFilter(e.target.value)}
-              >
-                <option value="All">All</option>
-                <option value="Reported">Reported</option>
-                <option value="In Progress">In Progress</option>
-                <option value="Completed">Completed</option>
-              </select>
+          <div className="filters-row" style={{ justifyContent: "space-between" }}>
+            <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
+              <div className="filter-group">
+                <label htmlFor="statusFilter">Status:</label>
+                <select
+                  id="statusFilter"
+                  value={statusFilter}
+                  onChange={(e) => setStatusFilter(e.target.value)}
+                >
+                  <option value="All">All</option>
+                  <option value="Reported">Reported</option>
+                  <option value="In Progress">In Progress</option>
+                  <option value="Completed">Completed</option>
+                </select>
+              </div>
+
+              <div className="filter-group">
+                <label htmlFor="searchText">
+                  Search (asset / title / category):
+                </label>
+                <input
+                  id="searchText"
+                  type="text"
+                  placeholder="e.g. BX22, mixer door, Quality..."
+                  value={searchText}
+                  onChange={(e) => setSearchText(e.target.value)}
+                />
+              </div>
             </div>
 
-            <div className="filter-group">
-              <label htmlFor="searchText">
-                Search (asset / title / category):
-              </label>
-              <input
-                id="searchText"
-                type="text"
-                placeholder="e.g. BX22, mixer door, Quality..."
-                value={searchText}
-                onChange={(e) => setSearchText(e.target.value)}
-              />
+            <div style={{ alignSelf: "flex-end" }}>
+              <button
+                onClick={() => {
+                  if (expandedIds.length === 0) {
+                    alert("Please expand a defect to generate a report.");
+                    return;
+                  }
+                  const defectId = expandedIds[0];
+                  const defect = defects.find(d => d.id === defectId);
+                  if (defect) {
+                    setSelectedDefectForReport(defect);
+                  }
+                }}
+                style={{
+                  padding: "8px 16px",
+                  borderRadius: 6,
+                  border: "none",
+                  backgroundColor: "#059669",
+                  color: "#ffffff",
+                  fontWeight: 600,
+                  cursor: "pointer",
+                }}
+              >
+                Generate Report
+              </button>
             </div>
           </div>
 
@@ -925,6 +1204,249 @@ function DefectsPage() {
       <footer style={{ textAlign: "center", padding: "20px", color: "#999", fontSize: 12 }}>
         Admin Portal v1.0
       </footer>
+
+      {/* REPORT MODAL */}
+      {selectedDefectForReport && (
+        <div
+          className="report-modal-overlay no-print"
+          style={{
+            position: "fixed",
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            backgroundColor: "rgba(0,0,0,0.5)",
+            zIndex: 1000,
+            overflow: "auto",
+            padding: "40px",
+          }}
+          onClick={() => setSelectedDefectForReport(null)}
+        >
+          <div
+            className="report-modal-paper no-print"
+            style={{
+              backgroundColor: "white",
+              padding: "20mm",
+              width: "210mm",
+              minHeight: "297mm",
+              boxShadow: "0 4px 20px rgba(0,0,0,0.2)",
+              margin: "0 auto",
+              position: "relative",
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <button
+              onClick={() => setSelectedDefectForReport(null)}
+              style={{
+                position: "absolute",
+                top: 12,
+                right: 12,
+                background: "transparent",
+                border: "none",
+                fontSize: 24,
+                cursor: "pointer",
+                color: "#666",
+              }}
+              className="no-print"
+            >
+              ×
+            </button>
+
+            <div id="report-content" style={{ fontFamily: "Arial, sans-serif", fontSize: "9pt", lineHeight: 1.4, color: "#000", textAlign: "left", width: "100%" }}>
+              {/* Header - Logo and Title */}
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6, paddingBottom: 4, borderBottom: "2px solid #333" }}>
+                <div style={{ textAlign: "left" }}>
+                  <h1 style={{ margin: 0, fontSize: "14pt", fontWeight: "bold" }}>DEFECT REPORT</h1>
+                </div>
+                <img 
+                  src="/holcim-logo.png" 
+                  alt="Logo" 
+                  style={{ maxHeight: 40, maxWidth: 100 }}
+                />
+              </div>
+
+              {/* Defect Details Table */}
+              <table style={{ width: "100%", marginBottom: 4, borderCollapse: "collapse", fontSize: "8pt" }}>
+                <tbody>
+                  <tr>
+                    <td style={{ padding: "2px 4px", backgroundColor: "#e8e8e8", border: "1px solid #999", width: "15%", fontWeight: "bold" }}>Asset</td>
+                    <td style={{ padding: "2px 4px", border: "1px solid #999", width: "35%", fontWeight: "bold" }}>{selectedDefectForReport.asset}</td>
+                    <td style={{ padding: "2px 4px", backgroundColor: "#e8e8e8", border: "1px solid #999", width: "15%", fontWeight: "bold" }}>Category</td>
+                    <td style={{ padding: "2px 4px", border: "1px solid #999", width: "35%" }}>{selectedDefectForReport.category || "—"}</td>
+                  </tr>
+                  <tr>
+                    <td style={{ padding: "4px 6px", backgroundColor: "#e8e8e8", border: "1px solid #999", fontWeight: "bold" }}>Title</td>
+                    <td style={{ padding: "4px 6px", border: "1px solid #999" }}>{selectedDefectForReport.title}</td>
+                    <td style={{ padding: "4px 6px", backgroundColor: "#e8e8e8", border: "1px solid #999", fontWeight: "bold" }}>Priority</td>
+                    <td style={{ padding: "4px 6px", border: "1px solid #999" }}>{selectedDefectForReport.priority || "—"}</td>
+                  </tr>
+                  <tr>
+                    <td style={{ padding: "4px 6px", backgroundColor: "#e8e8e8", border: "1px solid #999", fontWeight: "bold" }}>Status</td>
+                    <td style={{ padding: "4px 6px", border: "1px solid #999" }}>{selectedDefectForReport.status || "Reported"}</td>
+                    <td style={{ padding: "4px 6px", backgroundColor: "#e8e8e8", border: "1px solid #999", fontWeight: "bold" }}>Submitted By</td>
+                    <td style={{ padding: "4px 6px", border: "1px solid #999" }}>{selectedDefectForReport.submitted_by || "—"}</td>
+                  </tr>
+                  <tr>
+                    <td style={{ padding: "4px 6px", backgroundColor: "#e8e8e8", border: "1px solid #999", fontWeight: "bold" }}>Submitted At</td>
+                    <td style={{ padding: "4px 6px", border: "1px solid #999" }}>{formatDateTime(selectedDefectForReport.created_at) || "—"}</td>
+                    <td style={{ padding: "4px 6px", backgroundColor: "#e8e8e8", border: "1px solid #999", fontWeight: "bold" }}>Closed Out</td>
+                    <td style={{ padding: "4px 6px", border: "1px solid #999" }}>{selectedDefectForReport.closed_out ? formatDateTime(selectedDefectForReport.closed_out) : "—"}</td>
+                  </tr>
+                </tbody>
+              </table>
+
+              {/* Description */}
+              <div style={{ marginBottom: 4 }}>
+                <div style={{ fontSize: "9pt", fontWeight: "bold", marginBottom: 2, padding: "1px 4px", backgroundColor: "#333", color: "#fff" }}>DESCRIPTION</div>
+                <div style={{ padding: "4px", border: "1px solid #999", backgroundColor: "#fafafa", fontSize: "8pt", minHeight: "20px", textAlign: "left" }}>
+                  {selectedDefectForReport.description || "No description"}
+                </div>
+              </div>
+
+              {/* Defect Photos */}
+              <div style={{ marginBottom: 4, pageBreakInside: "avoid" }}>
+                <div style={{ fontSize: "9pt", fontWeight: "bold", marginBottom: 2, padding: "1px 4px", backgroundColor: "#333", color: "#fff" }}>DEFECT PHOTOS</div>
+                {selectedDefectForReport.photo_urls && selectedDefectForReport.photo_urls.length > 0 ? (
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 4, marginTop: 2 }}>
+                    {selectedDefectForReport.photo_urls.map((url, idx) => (
+                      <div key={idx} style={{ border: "1px solid #999", padding: 2, backgroundColor: "#fff", minHeight: "40px", display: "flex", flexDirection: "column", alignItems: "center" }}>
+                        <img
+                          src={url}
+                          alt={`Defect ${idx + 1}`}
+                          style={{ maxWidth: "100%", maxHeight: "40px", objectFit: "contain", display: "block" }}
+                        />
+                        <div style={{ fontSize: "6pt", textAlign: "center", marginTop: 1, color: "#666" }}>Photo {idx + 1}</div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div style={{ padding: "4px", border: "1px solid #999", backgroundColor: "#fafafa", fontSize: "8pt", fontStyle: "italic", textAlign: "left" }}>
+                    No defect photos available
+                  </div>
+                )}
+              </div>
+
+              {/* Actions Taken - Middle of page */}
+              <div style={{ marginBottom: 4, marginTop: 4 }}>
+                <div style={{ fontSize: "9pt", fontWeight: "bold", marginBottom: 2, padding: "1px 4px", backgroundColor: "#333", color: "#fff" }}>ACTIONS TAKEN</div>
+                <div style={{ padding: "4px", border: "1px solid #999", backgroundColor: "#fafafa", fontSize: "8pt", minHeight: "20px", textAlign: "left" }}>
+                  {selectedDefectForReport.actions_taken || "—"}
+                </div>
+              </div>
+
+              {/* Repair Photos */}
+              <div style={{ marginBottom: 4, pageBreakInside: "avoid" }}>
+                <div style={{ fontSize: "9pt", fontWeight: "bold", marginBottom: 2, padding: "1px 4px", backgroundColor: "#333", color: "#fff" }}>REPAIR PHOTOS</div>
+                {selectedDefectForReport.repair_photos && selectedDefectForReport.repair_photos.length > 0 ? (
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 4, marginTop: 2 }}>
+                    {selectedDefectForReport.repair_photos.map((url, idx) => (
+                      <div key={idx} style={{ border: "1px solid #999", padding: 2, backgroundColor: "#fff", minHeight: "40px", display: "flex", flexDirection: "column", alignItems: "center" }}>
+                        <img
+                          src={url}
+                          alt={`Repair ${idx + 1}`}
+                          style={{ maxWidth: "100%", maxHeight: "40px", objectFit: "contain", display: "block" }}
+                        />
+                        <div style={{ fontSize: "6pt", textAlign: "center", marginTop: 1, color: "#666" }}>Photo {idx + 1}</div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div style={{ padding: "4px", border: "1px solid #999", backgroundColor: "#fafafa", fontSize: "8pt", fontStyle: "italic", textAlign: "left" }}>
+                    No repair photos available
+                  </div>
+                )}
+              </div>
+
+              {/* Repair Company */}
+              <div style={{ marginBottom: 4 }}>
+                <div style={{ fontSize: "9pt", fontWeight: "bold", marginBottom: 2, padding: "1px 4px", backgroundColor: "#333", color: "#fff" }}>REPAIR COMPANY / PERSON</div>
+                <div style={{ padding: "4px", border: "1px solid #999", backgroundColor: "#fafafa", fontSize: "8pt", textAlign: "left" }}>
+                  {selectedDefectForReport.repair_company || "—"}
+                </div>
+              </div>
+
+              {/* Activity Log */}
+              <div style={{ marginTop: 4 }}>
+                <div style={{ fontSize: "9pt", fontWeight: "bold", marginBottom: 2, padding: "1px 4px", backgroundColor: "#333", color: "#fff" }}>ACTIVITY LOG</div>
+                {activityLogs[selectedDefectForReport.id] && activityLogs[selectedDefectForReport.id].length > 0 ? (
+                  <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "7pt" }}>
+                    <thead>
+                      <tr style={{ backgroundColor: "#e8e8e8" }}>
+                        <th style={{ padding: "2px 4px", border: "1px solid #999", textAlign: "left", width: "30%" }}>Date/Time</th>
+                        <th style={{ padding: "2px 4px", border: "1px solid #999", textAlign: "left", width: "25%" }}>User</th>
+                        <th style={{ padding: "2px 4px", border: "1px solid #999", textAlign: "left" }}>Action</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {activityLogs[selectedDefectForReport.id].map((log) => (
+                        <tr key={log.id}>
+                          <td style={{ padding: "2px 4px", border: "1px solid #999", fontSize: "6pt" }}>{formatDateTime(log.created_at)}</td>
+                          <td style={{ padding: "2px 4px", border: "1px solid #999", fontSize: "6pt" }}>{log.performed_by}</td>
+                          <td style={{ padding: "2px 4px", border: "1px solid #999", fontSize: "6pt" }}>{log.message}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                ) : (
+                  <div style={{ padding: "4px", border: "1px solid #999", backgroundColor: "#fafafa", fontSize: "8pt", fontStyle: "italic", textAlign: "left" }}>
+                    No activity logs available
+                  </div>
+                )}
+              </div>
+
+              {/* Footer - Generated date */}
+              <div style={{ marginTop: 16, paddingTop: 8, borderTop: "1px solid #ddd", textAlign: "center", fontSize: "7pt", color: "#666" }}>
+                Generated: {formatDateTime(new Date().toISOString())} | Maintenance Admin Portal
+              </div>
+            </div>
+
+            <div style={{ marginTop: 24, display: "flex", gap: 12 }} className="no-print">
+              <button
+                onClick={() => window.print()}
+                style={{
+                  padding: "10px 20px",
+                  borderRadius: 6,
+                  border: "none",
+                  backgroundColor: "#1d4ed8",
+                  color: "white",
+                  fontWeight: 600,
+                  cursor: "pointer",
+                }}
+              >
+                Print / Save as PDF
+              </button>
+              <button
+                onClick={() => sendReportEmail(selectedDefectForReport)}
+                style={{
+                  padding: "10px 20px",
+                  borderRadius: 6,
+                  border: "1px solid #1d4ed8",
+                  backgroundColor: "white",
+                  color: "#1d4ed8",
+                  fontWeight: 600,
+                  cursor: "pointer",
+                }}
+              >
+                📧 Email Report to Me
+              </button>
+              <button
+                onClick={() => saveToDrive(selectedDefectForReport)}
+                style={{
+                  padding: "10px 20px",
+                  borderRadius: 6,
+                  border: "1px solid #10b981",
+                  backgroundColor: "white",
+                  color: "#10b981",
+                  fontWeight: 600,
+                  cursor: "pointer",
+                }}
+              >
+                💾 Save to Drive
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

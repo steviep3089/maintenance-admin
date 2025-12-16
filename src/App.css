@@ -305,3 +305,121 @@ html,
 .details-photo-link {
   display: inline-block;
 }
+
+/* ===========================
+   PRINT STYLES FOR REPORT
+   =========================== */
+
+@media print {
+  @page {
+    size: A4 portrait;
+    margin: 12mm;
+  }
+  
+  /* Hide browser default headers and footers */
+  @page {
+    margin-top: 0;
+    margin-bottom: 0;
+  }
+  
+  html {
+    margin: 12mm;
+  }
+
+  /* Hide the main app content */
+  .app-root > *:not(.report-modal-overlay) {
+    display: none !important;
+  }
+
+  /* Hide all buttons */
+  .no-print,
+  button {
+    display: none !important;
+  }
+
+  /* Reset modal overlay for print */
+  .report-modal-overlay {
+    position: static !important;
+    background: white !important;
+    padding: 0 !important;
+    overflow: visible !important;
+    display: block !important;
+  }
+
+  /* Reset modal paper for print */
+  .report-modal-paper {
+    box-shadow: none !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    width: 100% !important;
+    min-height: auto !important;
+    display: block !important;
+  }
+
+  /* Report content styling */
+  #report-content {
+    display: block !important;
+    width: 100% !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    font-size: 9pt !important;
+    line-height: 1.3 !important;
+  }
+  
+  /* Keep header flex layout in print */
+  #report-content > div:first-child {
+    display: flex !important;
+    flex-direction: row !important;
+    align-items: center !important;
+    justify-content: space-between !important;
+  }
+  
+  #report-content h1 {
+    font-size: 14pt !important;
+    margin: 0 !important;
+  }
+  
+  #report-content table {
+    display: table !important;
+    font-size: 8pt !important;
+  }
+  
+  #report-content tbody {
+    display: table-row-group !important;
+  }
+  
+  #report-content tr {
+    display: table-row !important;
+  }
+  
+  #report-content td,
+  #report-content th {
+    display: table-cell !important;
+  }
+  
+  #report-content div {
+    display: block !important;
+  }
+  
+  #report-content img {
+    display: inline-block !important;
+    max-height: 60px !important;
+  }
+
+  img {
+    max-width: 100%;
+    page-break-inside: avoid;
+  }
+
+  h1, h2, h3 {
+    page-break-after: avoid;
+  }
+  
+  table {
+    page-break-inside: auto;
+  }
+  
+  tr {
+    page-break-inside: avoid;
+  }
+}
