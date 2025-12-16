@@ -193,6 +193,420 @@ function ResetPasswordPage({ onDone }) {
 }
 
 /* ===========================
+   ACTION TASK PAGE
+   =========================== */
+
+function ActionTaskPage() {
+  const [defects, setDefects] = useState([]);
+  const [users, setUsers] = useState([]);
+  const [selectedDefectId, setSelectedDefectId] = useState("");
+  const [selectedUserId, setSelectedUserId] = useState("");
+  const [dueDate, setDueDate] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [message, setMessage] = useState("");
+
+  useEffect(() => {
+    loadDefects();
+    loadUsers();
+  }, []);
+
+  async function loadDefects() {
+    try {
+      const { data, error } = await supabase
+        .from("defects")
+        .select("*")
+        .order("created_at", { ascending: false });
+
+      if (error) throw error;
+      setDefects(data || []);
+    } catch (err) {
+      console.error("Error loading defects:", err);
+    }
+  }
+
+  async function loadUsers() {
+    try {
+      // Get unique emails from defects (submitted_by field)
+      const { data: defectsData, error: defectsError } = await supabase
+        .from("defects")
+        .select("submitted_by");
+
+      if (defectsError) throw defectsError;
+
+      // Get unique emails
+      const uniqueEmails = [...new Set(defectsData.map(d => d.submitted_by).filter(Boolean))];
+      
+      // Get roles for these users if available
+      const { data: rolesData } = await supabase
+        .from("user_roles")
+        .select("user_id, role");
+
+      // Create a map of user emails with roles
+      const usersWithRoles = uniqueEmails.map((email) => ({
+        id: email,
+        email: email,
+        role: 'user' // Default to user role
+      }));
+
+      setUsers(usersWithRoles);
+      
+      if (usersWithRoles.length === 0) {
+        setMessage("No users found. Users will appear here after they submit defects.");
+      }
+    } catch (err) {
+      console.error("Error loading users:", err);
+      setMessage("Error loading users: " + err.message);
+    }
+  }
+
+  async function assignTask() {
+    if (!selectedDefectId || !selectedUserId || !dueDate) {
+      setMessage("Please fill in all fields");
+      return;
+    }
+
+    setLoading(true);
+    setMessage("");
+
+    try {
+      console.log("Selected Defect ID:", selectedDefectId);
+      console.log("Selected User ID:", selectedUserId);
+      console.log("Available defects:", defects.map(d => d.id));
+      console.log("Available users:", users.map(u => u.email));
+
+      const selectedDefect = defects.find(d => d.id === selectedDefectId);
+      const selectedUser = users.find(u => u.email === selectedUserId);
+      
+      console.log("Found defect:", selectedDefect);
+      console.log("Found user:", selectedUser);
+      
+      if (!selectedDefect) {
+        throw new Error("Defect not found. Please refresh and try again.");
+      }
+      
+      if (!selectedUser) {
+        throw new Error("User not found. Please refresh and try again.");
+      }
+
+      // Log task assignment in defect_activity
+      const { data: auth } = await supabase.auth.getUser();
+      const performer = auth?.user?.email ?? "Admin Portal";
+      
+      const { error: activityError } = await supabase
+        .from("defect_activity")
+        .insert({
+          defect_id: selectedDefect.id,
+          message: `Task assigned to ${selectedUser.email} - Due: ${dueDate}`,
+          performed_by: performer
+        });
+
+      if (activityError) throw activityError;
+
+      // Send email notification
+      const emailBody = `
+        <h2>Task Assignment Notification</h2>
+        <p>You have been assigned a maintenance task:</p>
+        <hr>
+        <p><strong>Asset:</strong> ${selectedDefect.asset}</p>
+        <p><strong>Title:</strong> ${selectedDefect.title}</p>
+        <p><strong>Category:</strong> ${selectedDefect.category}</p>
+        <p><strong>Priority:</strong> ${selectedDefect.priority}</p>
+        <p><strong>Status:</strong> ${selectedDefect.status}</p>
+        <p><strong>Description:</strong></p>
+        <p>${selectedDefect.description || 'N/A'}</p>
+        <hr>
+        <p><strong>Due Date:</strong> ${new Date(dueDate).toLocaleDateString()}</p>
+        <p>Please complete this task by the due date.</p>
+      `;
+
+      const { error: emailError } = await supabase.functions.invoke('send-report-email', {
+        body: {
+          to: selectedUser.email,
+          subject: `Task Assigned: ${selectedDefect.asset} - ${selectedDefect.title}`,
+          html: emailBody
+        }
+      });
+
+      if (emailError) throw emailError;
+
+      setMessage(`✓ Task assigned successfully to ${selectedUser.email}`);
+      setSelectedDefectId("");
+      setSelectedUserId("");
+      setDueDate("");
+    } catch (err) {
+      setMessage(`Error: ${err.message}`);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <div style={{ padding: 30, maxWidth: 800, margin: "0 auto" }}>
+      <h2 style={{ marginBottom: 20 }}>Action Task Assignment</h2>
+      <p style={{ color: "#666", marginBottom: 30 }}>
+        Assign a defect to a user and send them an email notification.
+      </p>
+
+      <div style={{ marginBottom: 15 }}>
+        <label style={{ display: "block", marginBottom: 5, fontWeight: 600 }}>
+          Select Defect
+        </label>
+        <select
+          value={selectedDefectId}
+          onChange={(e) => setSelectedDefectId(e.target.value)}
+          style={{
+            width: "100%",
+            padding: 10,
+            borderRadius: 6,
+            border: "1px solid #ddd",
+            fontSize: 16
+          }}
+        >
+          <option value="">-- Choose a defect --</option>
+          {defects.map((defect) => (
+            <option key={defect.id} value={defect.id}>
+              {defect.asset} - {defect.title} ({defect.status})
+            </option>
+          ))}
+        </select>
+      </div>
+
+      <div style={{ marginBottom: 15 }}>
+        <label style={{ display: "block", marginBottom: 5, fontWeight: 600 }}>
+          Assign To
+        </label>
+        <select
+          value={selectedUserId}
+          onChange={(e) => setSelectedUserId(e.target.value)}
+          style={{
+            width: "100%",
+            padding: 10,
+            borderRadius: 6,
+            border: "1px solid #ddd",
+            fontSize: 16
+          }}
+        >
+          <option value="">-- Choose a user --</option>
+          {users.map((user) => (
+            <option key={user.id} value={user.email}>
+              {user.email}
+            </option>
+          ))}
+        </select>
+      </div>
+
+      <div style={{ marginBottom: 25 }}>
+        <label style={{ display: "block", marginBottom: 5, fontWeight: 600 }}>
+          Due Date
+        </label>
+        <input
+          type="date"
+          value={dueDate}
+          onChange={(e) => setDueDate(e.target.value)}
+          min={new Date().toISOString().split('T')[0]}
+          style={{
+            width: "100%",
+            padding: 10,
+            borderRadius: 6,
+            border: "1px solid #ddd",
+            fontSize: 16
+          }}
+        />
+      </div>
+
+      <button
+        onClick={assignTask}
+        disabled={loading}
+        style={{
+          backgroundColor: "#3b82f6",
+          color: "white",
+          padding: "12px 24px",
+          borderRadius: 6,
+          border: "none",
+          fontSize: 16,
+          fontWeight: 600,
+          cursor: loading ? "not-allowed" : "pointer",
+          opacity: loading ? 0.6 : 1,
+          width: "100%"
+        }}
+      >
+        {loading ? "Assigning..." : "Assign Task"}
+      </button>
+
+      {message && (
+        <div
+          style={{
+            marginTop: 20,
+            padding: 12,
+            borderRadius: 6,
+            backgroundColor: message.startsWith("✓") ? "#dcfce7" : "#fee2e2",
+            color: message.startsWith("✓") ? "#166534" : "#991b1b",
+          }}
+        >
+          {message}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ===========================
+   USER MANAGEMENT PAGE
+   =========================== */
+
+function UserManagementPage() {
+  const [newUserEmail, setNewUserEmail] = useState("");
+  const [newUserPassword, setNewUserPassword] = useState("");
+  const [newUserRole, setNewUserRole] = useState("user");
+  const [loading, setLoading] = useState(false);
+  const [message, setMessage] = useState("");
+
+  async function createUser() {
+    if (!newUserEmail.trim() || !newUserPassword.trim()) {
+      setMessage("Email and password are required");
+      return;
+    }
+
+    setLoading(true);
+    setMessage("");
+
+    try {
+      // Create auth user
+      const { data, error } = await supabase.auth.signUp({
+        email: newUserEmail,
+        password: newUserPassword,
+        options: {
+          emailRedirectTo: window.location.origin
+        }
+      });
+
+      if (error) throw error;
+
+      // Add role to user_roles table
+      if (data.user) {
+        const { error: roleError } = await supabase
+          .from("user_roles")
+          .insert({
+            user_id: data.user.id,
+            role: newUserRole
+          });
+
+        if (roleError) throw roleError;
+      }
+
+      setMessage(`✓ User created successfully: ${newUserEmail}`);
+      setNewUserEmail("");
+      setNewUserPassword("");
+      setNewUserRole("user");
+    } catch (err) {
+      setMessage(`Error: ${err.message}`);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <div style={{ padding: 30, maxWidth: 600, margin: "0 auto" }}>
+      <h2 style={{ marginBottom: 20 }}>User Management</h2>
+      <p style={{ color: "#666", marginBottom: 30 }}>
+        Create new user accounts for the mobile app.
+      </p>
+
+      <div style={{ marginBottom: 15 }}>
+        <label style={{ display: "block", marginBottom: 5, fontWeight: 600 }}>
+          Email
+        </label>
+        <input
+          type="email"
+          value={newUserEmail}
+          onChange={(e) => setNewUserEmail(e.target.value)}
+          placeholder="user@company.com"
+          style={{
+            width: "100%",
+            padding: 10,
+            borderRadius: 6,
+            border: "1px solid #ddd",
+            fontSize: 16
+          }}
+        />
+      </div>
+
+      <div style={{ marginBottom: 15 }}>
+        <label style={{ display: "block", marginBottom: 5, fontWeight: 600 }}>
+          Password
+        </label>
+        <input
+          type="password"
+          value={newUserPassword}
+          onChange={(e) => setNewUserPassword(e.target.value)}
+          placeholder="Minimum 6 characters"
+          style={{
+            width: "100%",
+            padding: 10,
+            borderRadius: 6,
+            border: "1px solid #ddd",
+            fontSize: 16
+          }}
+        />
+      </div>
+
+      <div style={{ marginBottom: 25 }}>
+        <label style={{ display: "block", marginBottom: 5, fontWeight: 600 }}>
+          Role
+        </label>
+        <select
+          value={newUserRole}
+          onChange={(e) => setNewUserRole(e.target.value)}
+          style={{
+            width: "100%",
+            padding: 10,
+            borderRadius: 6,
+            border: "1px solid #ddd",
+            fontSize: 16
+          }}
+        >
+          <option value="user">User (Mobile App Only)</option>
+          <option value="admin">Admin (Full Access)</option>
+        </select>
+      </div>
+
+      <button
+        onClick={createUser}
+        disabled={loading}
+        style={{
+          backgroundColor: "#22c55e",
+          color: "white",
+          padding: "12px 24px",
+          borderRadius: 6,
+          border: "none",
+          fontSize: 16,
+          fontWeight: 600,
+          cursor: loading ? "not-allowed" : "pointer",
+          opacity: loading ? 0.6 : 1,
+          width: "100%"
+        }}
+      >
+        {loading ? "Creating..." : "Create User"}
+      </button>
+
+      {message && (
+        <div
+          style={{
+            marginTop: 20,
+            padding: 12,
+            borderRadius: 6,
+            backgroundColor: message.startsWith("✓") ? "#dcfce7" : "#fee2e2",
+            color: message.startsWith("✓") ? "#166534" : "#991b1b",
+          }}
+        >
+          {message}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ===========================
    DEFECTS PAGE (ADMIN PORTAL)
    =========================== */
 
@@ -711,53 +1125,38 @@ function DefectsPage() {
   const shownCount = filteredDefects.length;
 
   return (
-    <div className="app-root">
-      {/* HEADER */}
-      <header className="app-header">
-        <div className="brand-left">
-          <img
-            src="/holcim-logo.png"
-            alt="Holcim Sitebatch Technologies"
-            className="brand-logo"
-          />
-        </div>
-        <div className="brand-center">
-          <h1>Maintenance Admin Portal</h1>
-          <p>Defect overview from all assets</p>
+    <div style={{ padding: "20px 30px" }}>
+      {/* Refresh and Stats Bar */}
+      <div style={{ 
+        display: "flex", 
+        justifyContent: "space-between", 
+        alignItems: "center",
+        marginBottom: 20,
+        padding: "12px 20px",
+        backgroundColor: "#3b82f6",
+        color: "white",
+        borderRadius: 8
+      }}>
+        <div style={{ display: "flex", gap: 30 }}>
+          <span>Total defects loaded: {totalDefects}</span>
+          <span>Shown after filters: {shownCount}</span>
         </div>
         <button
-          className="refresh-button"
           onClick={loadDefects}
           disabled={loading}
+          style={{
+            padding: "8px 16px",
+            borderRadius: 6,
+            border: "none",
+            backgroundColor: "white",
+            color: "#3b82f6",
+            fontWeight: 600,
+            cursor: loading ? "not-allowed" : "pointer",
+            opacity: loading ? 0.6 : 1
+          }}
         >
           {loading ? "Refreshing..." : "Refresh"}
         </button>
-      </header>
-
-      {/* SIGN OUT BUTTON */}
-      <button
-        onClick={() => supabase.auth.signOut()}
-        style={{
-          marginLeft: 16,
-          marginTop: 8,
-          padding: "8px 16px",
-          borderRadius: 999,
-          border: "none",
-          backgroundColor: "#1d4ed8",
-          color: "#ffffff",
-          fontWeight: 600,
-          fontSize: 14,
-          cursor: "pointer",
-          boxShadow: "0 1px 2px rgba(0,0,0,0.08)",
-        }}
-      >
-        Sign out
-      </button>
-
-      {/* DEBUG BAR */}
-      <div className="debug-bar">
-        <span>Total defects loaded: {totalDefects}</span>
-        <span>Shown after filters: {shownCount}</span>
       </div>
 
       {/* MAIN */}
@@ -1662,6 +2061,7 @@ export default function App() {
   const [session, setSession] = useState(null);
   const [role, setRole] = useState(null); // "admin" or "user" or null
   const [view, setView] = useState("loading"); // "loading" | "login" | "reset" | "app"
+  const [activeTab, setActiveTab] = useState("defects");
 
   async function loadRoleForSession(currentSession) {
     if (!currentSession) {
@@ -1805,5 +2205,112 @@ export default function App() {
     );
   }
 
-  return <DefectsPage />;
+  // Admin portal with tabs
+  return (
+    <div className="app-root">
+      {/* Top Bar with Logo, Title, Sign Out */}
+      <div style={{ 
+        display: "flex", 
+        alignItems: "center", 
+        justifyContent: "space-between",
+        padding: "15px 30px",
+        backgroundColor: "#fff",
+        borderBottom: "1px solid #e5e7eb"
+      }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 15 }}>
+          <img 
+            src="/logo.png" 
+            alt="Logo" 
+            style={{ height: 50 }}
+          />
+          <div>
+            <h1 style={{ margin: 0, fontSize: 24, fontWeight: 700 }}>
+              Maintenance Admin Portal
+            </h1>
+            <p style={{ margin: 0, color: "#666", fontSize: 14 }}>
+              Defect overview from all assets
+            </p>
+          </div>
+        </div>
+        <button
+          onClick={() => supabase.auth.signOut()}
+          style={{
+            padding: "10px 20px",
+            borderRadius: 6,
+            border: "none",
+            backgroundColor: "#1d4ed8",
+            color: "#ffffff",
+            fontWeight: 600,
+            fontSize: 14,
+            cursor: "pointer",
+          }}
+        >
+          Sign out
+        </button>
+      </div>
+
+      {/* Navigation Tabs */}
+      <div style={{ 
+        borderBottom: "2px solid #e5e7eb", 
+        backgroundColor: "#f9fafb",
+        padding: "0 30px"
+      }}>
+        <div style={{ display: "flex", gap: 20 }}>
+          <button
+            onClick={() => setActiveTab("defects")}
+            style={{
+              padding: "15px 20px",
+              border: "none",
+              backgroundColor: "transparent",
+              borderBottom: activeTab === "defects" ? "3px solid #3b82f6" : "3px solid transparent",
+              color: activeTab === "defects" ? "#3b82f6" : "#6b7280",
+              fontWeight: 600,
+              fontSize: 16,
+              cursor: "pointer",
+              transition: "all 0.2s"
+            }}
+          >
+            📋 Defects
+          </button>
+          <button
+            onClick={() => setActiveTab("tasks")}
+            style={{
+              padding: "15px 20px",
+              border: "none",
+              backgroundColor: "transparent",
+              borderBottom: activeTab === "tasks" ? "3px solid #3b82f6" : "3px solid transparent",
+              color: activeTab === "tasks" ? "#3b82f6" : "#6b7280",
+              fontWeight: 600,
+              fontSize: 16,
+              cursor: "pointer",
+              transition: "all 0.2s"
+            }}
+          >
+            ✅ Action Task
+          </button>
+          <button
+            onClick={() => setActiveTab("users")}
+            style={{
+              padding: "15px 20px",
+              border: "none",
+              backgroundColor: "transparent",
+              borderBottom: activeTab === "users" ? "3px solid #3b82f6" : "3px solid transparent",
+              color: activeTab === "users" ? "#3b82f6" : "#6b7280",
+              fontWeight: 600,
+              fontSize: 16,
+              cursor: "pointer",
+              transition: "all 0.2s"
+            }}
+          >
+            👥 User Management
+          </button>
+        </div>
+      </div>
+
+      {/* Tab Content */}
+      {activeTab === "defects" && <DefectsPage />}
+      {activeTab === "tasks" && <ActionTaskPage />}
+      {activeTab === "users" && <UserManagementPage />}
+    </div>
+  );
 }
