@@ -1,0 +1,12 @@
+{
+  "expo": {
+    "extra": {
+      "eas": {
+        "projectId": "4939dccb-2233-4448-a2ff-5322b8611e97"
+      }
+    },
+    "android": {
+      "package": "com.steviep3089.maintenanceadmin"
+    }
+  }
+}

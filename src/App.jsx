@@ -53,6 +53,26 @@ function ResetPasswordPage({ onDone }) {
   const [confirm, setConfirm] = useState("");
   const [error, setError] = useState("");
   const [info, setInfo] = useState("");
+  const [userRole, setUserRole] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    async function checkRole() {
+      const { data: { session } } = await supabase.auth.getSession();
+      
+      if (session?.user) {
+        const { data } = await supabase
+          .from("user_roles")
+          .select("role")
+          .eq("user_id", session.user.id)
+          .single();
+        
+        setUserRole(data?.role || null);
+      }
+      setLoading(false);
+    }
+    checkRole();
+  }, []);
 
   async function handleReset(e) {
     e.preventDefault();
@@ -93,6 +113,57 @@ function ResetPasswordPage({ onDone }) {
     }
   }
 
+  if (loading) {
+    return (
+      <div className="app-root">
+        <div style={{ maxWidth: 420, margin: "80px auto", padding: 24, textAlign: "center" }}>
+          Loading...
+        </div>
+      </div>
+    );
+  }
+
+  // Non-admin users can't reset password via portal
+  if (userRole !== "admin") {
+    return (
+      <div className="app-root">
+        <div
+          style={{
+            maxWidth: 420,
+            margin: "80px auto",
+            padding: 24,
+            background: "#ffffff",
+            borderRadius: 12,
+            boxShadow: "0 10px 30px rgba(0,0,0,0.08)",
+          }}
+        >
+          <h1 style={{ marginBottom: 8 }}>Access Restricted</h1>
+          <p style={{ marginTop: 0, marginBottom: 20, color: "#6b7280" }}>
+            This portal is for admin users only. If you're a regular user, please use the mobile app to reset your password.
+          </p>
+          <button
+            onClick={() => {
+              supabase.auth.signOut();
+              window.close();
+            }}
+            style={{
+              width: "100%",
+              padding: 10,
+              borderRadius: 999,
+              border: "none",
+              backgroundColor: "#1d4ed8",
+              color: "#ffffff",
+              fontWeight: 600,
+              cursor: "pointer",
+            }}
+          >
+            Close
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="app-root">
       <div
@@ -107,7 +178,7 @@ function ResetPasswordPage({ onDone }) {
       >
         <h1 style={{ marginBottom: 8 }}>Reset your password</h1>
         <p style={{ marginTop: 0, marginBottom: 20, color: "#6b7280" }}>
-          Please enter a new password for your account.
+          Please enter a new password for your admin account.
         </p>
 
         <form onSubmit={handleReset}>
@@ -471,6 +542,9 @@ function UserManagementPage() {
     setMessage("");
 
     try {
+      // Store current admin session
+      const currentSession = (await supabase.auth.getSession()).data.session;
+      
       // Create auth user
       const { data, error } = await supabase.auth.signUp({
         email: newUserEmail,
@@ -492,6 +566,14 @@ function UserManagementPage() {
           });
 
         if (roleError) throw roleError;
+        
+        // Restore admin session (signUp auto-logs in the new user)
+        if (currentSession) {
+          await supabase.auth.setSession({
+            access_token: currentSession.access_token,
+            refresh_token: currentSession.refresh_token
+          });
+        }
       }
 
       setMessage(`✓ User created successfully: ${newUserEmail}`);
