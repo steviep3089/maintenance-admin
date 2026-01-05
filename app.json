@@ -7,6 +7,12 @@
     },
     "android": {
       "package": "com.steviep3089.maintenanceadmin"
+    },
+    "ios": {
+      "bundleIdentifier": "com.steviep3089.maintenanceadmin",
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false
+      }
     }
   }
 }
