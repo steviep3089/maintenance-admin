@@ -837,19 +837,13 @@ function DefectsPage({ activeTab }) {
     console.log("=== sendReportEmail called ===");
     console.log("Defect:", defect);
     try {
-      // Use selected recipient or default to current user
-      let recipientEmail = selectedRecipientEmail;
-      
-      if (!recipientEmail) {
-        console.log("No recipient selected, using current user...");
-        const { data: { user } } = await supabase.auth.getUser();
-        console.log("User:", user);
-        if (!user) {
-          alert("Could not get user email");
-          return;
-        }
-        recipientEmail = user.email;
+      // Require recipient selection
+      if (!selectedRecipientEmail) {
+        alert("Please select an administrator to send the report to.");
+        return;
       }
+      
+      const recipientEmail = selectedRecipientEmail;
 
       // Log the email activity BEFORE generating PDF so it appears in the PDF
       const { data: auth } = await supabase.auth.getUser();
@@ -1989,7 +1983,7 @@ function DefectsPage({ activeTab }) {
                   fontSize: "14px",
                 }}
               >
-                <option value="">Me (Current User)</option>
+                <option value="" disabled>Please select an Administrator to send the report to</option>
                 {adminUsers.map((email) => (
                   <option key={email} value={email}>
                     {email}
