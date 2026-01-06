@@ -45,25 +45,29 @@ serve(async (req) => {
 
     console.log('User created in auth:', userData.user.id)
 
-    // Insert role into user_roles table
-    // Using service_role key bypasses RLS policies
-    const { data: roleData, error: roleError } = await supabase
-      .from('user_roles')
-      .insert({
-        user_id: userData.user.id,
-        role: role
-      })
-      .select()
+    // Only insert into user_roles if role is admin or manager
+    // Regular users only exist in auth.users, not user_roles
+    if (role === 'admin' || role === 'manager') {
+      const { data: roleData, error: roleError } = await supabase
+        .from('user_roles')
+        .insert({
+          user_id: userData.user.id,
+          role: role
+        })
+        .select()
 
-    if (roleError) {
-      console.error('Role insert error:', roleError)
-      console.error('Role error details:', JSON.stringify(roleError))
-      // Try to delete the auth user if role insert fails
-      await supabase.auth.admin.deleteUser(userData.user.id)
-      throw new Error(`Failed to assign role: ${roleError.message}`)
+      if (roleError) {
+        console.error('Role insert error:', roleError)
+        console.error('Role error details:', JSON.stringify(roleError))
+        // Try to delete the auth user if role insert fails
+        await supabase.auth.admin.deleteUser(userData.user.id)
+        throw new Error(`Failed to assign role: ${roleError.message}`)
+      }
+
+      console.log('Role assigned successfully:', roleData)
+    } else {
+      console.log('Regular user - no role entry needed')
     }
-
-    console.log('Role assigned successfully:', roleData)
 
     return new Response(
       JSON.stringify({ 

@@ -656,6 +656,7 @@ function UserManagementPage() {
           }}
         >
           <option value="user">User (Mobile App Only)</option>
+          <option value="manager">Manager</option>
           <option value="admin">Admin (Full Access)</option>
         </select>
       </div>
