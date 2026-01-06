@@ -956,6 +956,16 @@ function DefectsPage({ activeTab }) {
         console.error("Email send error:", error);
         alert(`Failed to send email:\n\n${error.message || JSON.stringify(error)}\n\nCheck browser console for details.`);
       } else {
+        // Log the email activity
+        const { data: auth } = await supabase.auth.getUser();
+        const performer = auth?.user?.email ?? "Admin Portal";
+        
+        await supabase.from("defect_activity").insert({
+          defect_id: defect.id,
+          message: `PDF report emailed to ${recipientEmail}`,
+          performed_by: performer
+        });
+        
         alert(`Report PDF emailed successfully to ${recipientEmail}`);
       }
     } catch (err) {
@@ -1033,6 +1043,17 @@ function DefectsPage({ activeTab }) {
 
       console.log("Uploading PDF to Google Drive...");
       await uploadToGoogleDrive(pdfBlob, filename);
+      
+      // Log the Drive save activity
+      const { data: auth } = await supabase.auth.getUser();
+      const performer = auth?.user?.email ?? "Admin Portal";
+      
+      await supabase.from("defect_activity").insert({
+        defect_id: defect.id,
+        message: `PDF report saved to Google Drive: ${filename}`,
+        performed_by: performer
+      });
+      
       alert(`Report PDF saved to Google Drive successfully!`);
     } catch (err) {
       console.error("Google Drive save error:", err);
