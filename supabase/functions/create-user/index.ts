@@ -79,12 +79,20 @@ serve(async (req) => {
 
   } catch (error) {
     console.error('Exception:', error)
+    
+    // Return proper error messages for common cases
+    let errorMessage = error.message || 'Unknown error'
+    
+    if (error.message?.includes('already been registered')) {
+      errorMessage = 'A user with this email already exists'
+    }
+    
     return new Response(
       JSON.stringify({ 
         success: false,
-        error: error.message || 'Unknown error'
+        error: errorMessage
       }),
-      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     )
   }
 })
