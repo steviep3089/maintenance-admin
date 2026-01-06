@@ -315,48 +315,32 @@ html,
     size: A4 portrait;
     margin: 12mm;
   }
-  
-  /* Hide browser default headers and footers */
-  @page {
-    margin-top: 0;
-    margin-bottom: 0;
-  }
-  
-  html {
-    margin: 12mm;
-  }
 
   /* Hide the main app content */
   .app-root > *:not(.report-modal-overlay) {
     display: none !important;
   }
 
-  /* Hide all buttons */
-  .no-print,
-  button {
-    display: none !important;
-  }
-
-  /* Reset modal overlay for print */
+  /* Show the modal overlay and paper */
   .report-modal-overlay {
+    display: block !important;
     position: static !important;
     background: white !important;
     padding: 0 !important;
     overflow: visible !important;
-    display: block !important;
+    z-index: auto !important;
   }
 
-  /* Reset modal paper for print */
   .report-modal-paper {
+    display: block !important;
     box-shadow: none !important;
     margin: 0 !important;
     padding: 0 !important;
     width: 100% !important;
     min-height: auto !important;
-    display: block !important;
   }
 
-  /* Report content styling */
+  /* Show report content */
   #report-content {
     display: block !important;
     width: 100% !important;
@@ -364,6 +348,11 @@ html,
     margin: 0 !important;
     font-size: 9pt !important;
     line-height: 1.3 !important;
+  }
+  
+  /* Hide all .no-print elements */
+  .no-print {
+    display: none !important;
   }
   
   /* Keep header flex layout in print */
@@ -381,6 +370,8 @@ html,
   
   #report-content table {
     display: table !important;
+    width: 100% !important;
+    border-collapse: collapse !important;
     font-size: 8pt !important;
   }
   
@@ -397,7 +388,7 @@ html,
     display: table-cell !important;
   }
   
-  #report-content div {
+  #report-content div:not(.no-print) {
     display: block !important;
   }
   
