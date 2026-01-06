@@ -1780,7 +1780,7 @@ function DefectsPage({ activeTab }) {
       {/* REPORT MODAL */}
       {selectedDefectForReport && (
         <div
-          className="report-modal-overlay no-print"
+          className="report-modal-overlay"
           style={{
             position: "fixed",
             top: 0,
@@ -1795,7 +1795,7 @@ function DefectsPage({ activeTab }) {
           onClick={() => setSelectedDefectForReport(null)}
         >
           <div
-            className="report-modal-paper no-print"
+            className="report-modal-paper"
             style={{
               backgroundColor: "white",
               padding: "20mm",
