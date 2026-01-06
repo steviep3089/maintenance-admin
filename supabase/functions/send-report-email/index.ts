@@ -69,9 +69,20 @@ serve(async (req) => {
     )
   } catch (error) {
     console.error('Exception:', error)
+    
+    // Return proper error message
+    let errorMessage = error.message || 'Unknown error'
+    
+    // Check for common Gmail SMTP errors
+    if (errorMessage.includes('authentication')) {
+      errorMessage = 'Gmail authentication failed - check GMAIL_USER and GMAIL_APP_PASSWORD secrets'
+    } else if (errorMessage.includes('connection')) {
+      errorMessage = 'Failed to connect to Gmail SMTP server'
+    }
+    
     return new Response(
-      JSON.stringify({ error: error.message || 'Unknown error', stack: error.stack }),
-      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      JSON.stringify({ success: false, error: errorMessage, details: error.stack }),
+      { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } },
     )
   }
 })
