@@ -802,8 +802,12 @@ function DefectsPage({ activeTab }) {
   }
 
   async function sendReportEmail(defect) {
+    console.log("=== sendReportEmail called ===");
+    console.log("Defect:", defect);
     try {
+      console.log("Getting user...");
       const { data: { user } } = await supabase.auth.getUser();
+      console.log("User:", user);
       if (!user) {
         alert("Could not get user email");
         return;
