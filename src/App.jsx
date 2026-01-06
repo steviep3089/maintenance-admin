@@ -728,6 +728,8 @@ function DefectsPage({ activeTab }) {
         throw new Error(data.error || 'Failed to load users');
       }
 
+      console.log("All users from list-users:", data.users);
+
       // Get admin user IDs
       const { data: adminRoles, error: roleError } = await supabase
         .from("user_roles")
@@ -736,6 +738,8 @@ function DefectsPage({ activeTab }) {
 
       if (roleError) throw roleError;
 
+      console.log("Admin roles from user_roles:", adminRoles);
+
       const adminUserIds = adminRoles.map(r => r.user_id);
       
       // Filter to only admin users
@@ -743,6 +747,7 @@ function DefectsPage({ activeTab }) {
         .filter(u => adminUserIds.includes(u.id))
         .map(u => u.email);
 
+      console.log("Filtered admin emails:", adminEmails);
       setAdminUsers(adminEmails);
     } catch (err) {
       console.error("Error loading admin users:", err);
