@@ -310,16 +310,16 @@ function ActionTaskPage() {
 
   async function loadUsers() {
     try {
-      // Fetch all users from Supabase Auth
-      const { data: authData, error: authError } = await supabase.auth.admin.listUsers();
+      // Call edge function to get all users
+      const { data, error } = await supabase.functions.invoke('list-users');
 
-      if (authError) throw authError;
+      if (error) throw error;
+      
+      if (!data.success) {
+        throw new Error(data.error || 'Failed to load users');
+      }
 
-      // Map auth users to our format
-      const allUsers = authData.users.map((user) => ({
-        id: user.id,
-        email: user.email,
-      }));
+      const allUsers = data.users || [];
 
       setUsers(allUsers);
       setFilteredUsers(allUsers);
