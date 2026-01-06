@@ -316,17 +316,18 @@ html,
     margin: 12mm;
   }
 
-  /* Hide elements marked as no-print */
-  .no-print {
+  /* Hide the entire app root structure */
+  .app-root > * {
     display: none !important;
   }
 
-  /* Hide app structure elements */
-  .app-header,
-  .debug-bar,
-  .tabs,
-  main,
-  footer {
+  /* Show only the report modal */
+  .app-root .report-modal-overlay {
+    display: block !important;
+  }
+
+  /* Hide elements marked as no-print */
+  .no-print {
     display: none !important;
   }
 
