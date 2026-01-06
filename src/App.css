@@ -316,8 +316,17 @@ html,
     margin: 12mm;
   }
 
-  /* Hide the main app content */
-  .app-root > *:not(.report-modal-overlay) {
+  /* Hide the main app UI elements */
+  .app-header,
+  .debug-bar,
+  .tabs,
+  .defects-page > *:not(.report-modal-overlay),
+  footer {
+    display: none !important;
+  }
+
+  /* Hide all .no-print elements */
+  .no-print {
     display: none !important;
   }
 
@@ -348,11 +357,6 @@ html,
     margin: 0 !important;
     font-size: 9pt !important;
     line-height: 1.3 !important;
-  }
-  
-  /* Hide all .no-print elements */
-  .no-print {
-    display: none !important;
   }
   
   /* Keep header flex layout in print */
