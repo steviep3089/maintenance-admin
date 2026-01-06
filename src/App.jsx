@@ -281,7 +281,7 @@ function ActionTaskPage() {
   useEffect(() => {
     loadDefects();
     loadUsers();
-  }, []);
+  }, []); // Loads on mount due to key prop forcing remount
 
   useEffect(() => {
     // Filter users based on search text
@@ -741,7 +741,7 @@ function DefectsPage() {
 
   useEffect(() => {
     loadDefects();
-  }, []);
+  }, []); // Loads on mount due to key prop forcing remount
 
   // Upload PDF to Google Drive using new Google Identity Services
   async function uploadToGoogleDrive(pdfBlob, filename) {
