@@ -316,22 +316,31 @@ html,
     margin: 12mm;
   }
 
-  /* Hide everything except the report modal */
-  .app-root > *:not(.report-modal-overlay) {
-    display: none !important;
+  /* Hide everything */
+  body * {
+    visibility: hidden;
   }
 
-  /* Hide elements marked as no-print */
-  .no-print {
-    display: none !important;
+  /* Show only the report modal and its contents */
+  .report-modal-overlay,
+  .report-modal-overlay * {
+    visibility: visible;
+  }
+
+  /* Hide .no-print elements within the modal */
+  .no-print,
+  .no-print * {
+    visibility: hidden !important;
   }
 
   /* Make modal overlay fill page and remove overlay styling */
   .report-modal-overlay {
-    position: static !important;
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
     background: transparent !important;
     padding: 0 !important;
-    overflow: visible !important;
   }
 
   /* Remove modal box styling for print */
@@ -346,7 +355,6 @@ html,
 
   /* Ensure report content is visible */
   #report-content {
-    display: block !important;
     font-size: 9pt !important;
     line-height: 1.3 !important;
   }
