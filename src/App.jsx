@@ -893,6 +893,7 @@ function DefectsPage({ activeTab }) {
         body: {
           to: user.email,
           subject: `Defect Report: ${defect.asset} - ${defect.title}`,
+          html: '<p>Please find attached the defect report PDF.</p>',
           pdfBase64: pdfBase64,
           filename: filename
         }
