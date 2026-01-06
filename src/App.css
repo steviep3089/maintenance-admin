@@ -316,14 +316,9 @@ html,
     margin: 12mm;
   }
 
-  /* Hide the entire app root structure */
-  .app-root > * {
+  /* Hide everything except the report modal */
+  .app-root > *:not(.report-modal-overlay) {
     display: none !important;
-  }
-
-  /* Show only the report modal */
-  .app-root .report-modal-overlay {
-    display: block !important;
   }
 
   /* Hide elements marked as no-print */
