@@ -316,11 +316,16 @@ html,
     margin: 12mm;
   }
 
+  /* Hide everything in the body except the report modal */
+  body > div > *:not(.report-modal-overlay) {
+    display: none !important;
+  }
+
   /* Hide the main app UI elements */
   .app-header,
   .debug-bar,
   .tabs,
-  .defects-page > *:not(.report-modal-overlay),
+  main,
   footer {
     display: none !important;
   }
