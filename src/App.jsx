@@ -401,7 +401,12 @@ function ActionTaskPage() {
         }
       });
 
-      if (emailError) throw emailError;
+      console.log('Email error:', emailError);
+
+      if (emailError) {
+        console.error('Failed to send email:', emailError);
+        throw new Error(`Failed to send email: ${emailError.message}`);
+      }
 
       setMessage(`✓ Task assigned successfully to ${selectedUser.email}`);
       setSelectedDefectId("");
