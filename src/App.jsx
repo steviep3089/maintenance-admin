@@ -714,6 +714,40 @@ function DefectsPage({ activeTab }) {
   const [editState, setEditState] = useState({});
   const [activityLogs, setActivityLogs] = useState({});
   const [selectedDefectForReport, setSelectedDefectForReport] = useState(null);
+  const [adminUsers, setAdminUsers] = useState([]);
+  const [selectedRecipientEmail, setSelectedRecipientEmail] = useState("");
+
+  async function loadAdminUsers() {
+    try {
+      // Get all users from edge function
+      const { data, error } = await supabase.functions.invoke('list-users');
+
+      if (error) throw error;
+      
+      if (!data.success) {
+        throw new Error(data.error || 'Failed to load users');
+      }
+
+      // Get admin user IDs
+      const { data: adminRoles, error: roleError } = await supabase
+        .from("user_roles")
+        .select("user_id")
+        .eq("role", "admin");
+
+      if (roleError) throw roleError;
+
+      const adminUserIds = adminRoles.map(r => r.user_id);
+      
+      // Filter to only admin users
+      const adminEmails = (data.users || [])
+        .filter(u => adminUserIds.includes(u.id))
+        .map(u => u.email);
+
+      setAdminUsers(adminEmails);
+    } catch (err) {
+      console.error("Error loading admin users:", err);
+    }
+  }
 
   async function loadDefects() {
     setLoading(true);
@@ -744,6 +778,7 @@ function DefectsPage({ activeTab }) {
   useEffect(() => {
     if (activeTab === "defects") {
       loadDefects();
+      loadAdminUsers();
     }
   }, [activeTab]);
 
@@ -805,12 +840,18 @@ function DefectsPage({ activeTab }) {
     console.log("=== sendReportEmail called ===");
     console.log("Defect:", defect);
     try {
-      console.log("Getting user...");
-      const { data: { user } } = await supabase.auth.getUser();
-      console.log("User:", user);
-      if (!user) {
-        alert("Could not get user email");
-        return;
+      // Use selected recipient or default to current user
+      let recipientEmail = selectedRecipientEmail;
+      
+      if (!recipientEmail) {
+        console.log("No recipient selected, using current user...");
+        const { data: { user } } = await supabase.auth.getUser();
+        console.log("User:", user);
+        if (!user) {
+          alert("Could not get user email");
+          return;
+        }
+        recipientEmail = user.email;
       }
 
       console.log("Starting PDF generation...");
@@ -895,12 +936,12 @@ function DefectsPage({ activeTab }) {
       const shortDesc = (defect.title || 'Report').substring(0, 30).replace(/[^a-zA-Z0-9]/g, '-');
       const filename = `Defect-Report-${defect.asset}-${shortDesc}-${dateStr}.pdf`;
 
-      console.log("Sending email with PDF to:", user.email);
+      console.log("Sending email with PDF to:", recipientEmail);
 
       // Call Supabase function to send email with PDF attachment
       const { data, error } = await supabase.functions.invoke('send-report-email', {
         body: {
-          to: user.email,
+          to: recipientEmail,
           subject: `Defect Report: ${defect.asset} - ${defect.title}`,
           html: '<p>Please find attached the defect report PDF.</p>',
           pdfBase64: pdfBase64,
@@ -915,7 +956,7 @@ function DefectsPage({ activeTab }) {
         console.error("Email send error:", error);
         alert(`Failed to send email:\n\n${error.message || JSON.stringify(error)}\n\nCheck browser console for details.`);
       } else {
-        alert(`Report PDF emailed successfully to ${user.email}`);
+        alert(`Report PDF emailed successfully to ${recipientEmail}`);
       }
     } catch (err) {
       console.error("Email error:", err);
@@ -1908,7 +1949,32 @@ function DefectsPage({ activeTab }) {
               </div>
             </div>
 
-            <div style={{ marginTop: 24, display: "flex", gap: 12 }} className="no-print">
+            {/* Recipient Selection */}
+            <div style={{ marginTop: 16 }} className="no-print">
+              <label style={{ display: "block", marginBottom: 8, fontWeight: 600, fontSize: "14px" }}>
+                Email Recipient:
+              </label>
+              <select
+                value={selectedRecipientEmail}
+                onChange={(e) => setSelectedRecipientEmail(e.target.value)}
+                style={{
+                  width: "100%",
+                  padding: "8px 12px",
+                  borderRadius: 6,
+                  border: "1px solid #d1d5db",
+                  fontSize: "14px",
+                }}
+              >
+                <option value="">Me (Current User)</option>
+                {adminUsers.map((email) => (
+                  <option key={email} value={email}>
+                    {email}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div style={{ marginTop: 16, display: "flex", gap: 12 }} className="no-print">
               <button
                 onClick={() => window.print()}
                 style={{
