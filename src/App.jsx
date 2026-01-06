@@ -656,7 +656,6 @@ function UserManagementPage() {
           }}
         >
           <option value="user">User (Mobile App Only)</option>
-          <option value="manager">Manager</option>
           <option value="admin">Admin (Full Access)</option>
         </select>
       </div>
@@ -2412,9 +2411,9 @@ export default function App() {
       </div>
 
       {/* Tab Content */}
-      {activeTab === "defects" && <DefectsPage />}
-      {activeTab === "tasks" && <ActionTaskPage />}
-      {activeTab === "users" && <UserManagementPage />}
+      {activeTab === "defects" && <DefectsPage key="defects" />}
+      {activeTab === "tasks" && <ActionTaskPage key="tasks" />}
+      {activeTab === "users" && <UserManagementPage key="users" />}
     </div>
   );
 }
