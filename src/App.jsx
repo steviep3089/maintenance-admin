@@ -854,6 +854,19 @@ function DefectsPage({ activeTab }) {
         recipientEmail = user.email;
       }
 
+      // Log the email activity BEFORE generating PDF so it appears in the PDF
+      const { data: auth } = await supabase.auth.getUser();
+      const performer = auth?.user?.email ?? "Admin Portal";
+      
+      await supabase.from("defect_activity").insert({
+        defect_id: defect.id,
+        message: `PDF report emailed to ${recipientEmail}`,
+        performed_by: performer
+      });
+      
+      // Reload activity to show in the PDF
+      await loadActivity(defect.id);
+
       console.log("Starting PDF generation...");
       alert("Generating PDF... This may take a moment.");
 
@@ -956,16 +969,6 @@ function DefectsPage({ activeTab }) {
         console.error("Email send error:", error);
         alert(`Failed to send email:\n\n${error.message || JSON.stringify(error)}\n\nCheck browser console for details.`);
       } else {
-        // Log the email activity
-        const { data: auth } = await supabase.auth.getUser();
-        const performer = auth?.user?.email ?? "Admin Portal";
-        
-        await supabase.from("defect_activity").insert({
-          defect_id: defect.id,
-          message: `PDF report emailed to ${recipientEmail}`,
-          performed_by: performer
-        });
-        
         alert(`Report PDF emailed successfully to ${recipientEmail}`);
       }
     } catch (err) {
@@ -976,6 +979,22 @@ function DefectsPage({ activeTab }) {
 
   async function saveToDrive(defect) {
     try {
+      // Log the Drive save activity BEFORE generating PDF so it appears in the PDF
+      const { data: auth } = await supabase.auth.getUser();
+      const performer = auth?.user?.email ?? "Admin Portal";
+      const dateStr = new Date().toISOString().split('T')[0];
+      const shortDesc = (defect.title || 'Report').substring(0, 30).replace(/[^a-zA-Z0-9]/g, '-');
+      const filename = `Defect-Report-${defect.asset}-${shortDesc}-${dateStr}.pdf`;
+      
+      await supabase.from("defect_activity").insert({
+        defect_id: defect.id,
+        message: `PDF report saved to Google Drive: ${filename}`,
+        performed_by: performer
+      });
+      
+      // Reload activity to show in the PDF
+      await loadActivity(defect.id);
+      
       alert("Generating PDF for Google Drive... This may take a moment.");
 
       // Get the report content element
@@ -1022,10 +1041,10 @@ function DefectsPage({ activeTab }) {
       // Wait for all images to be converted
       await Promise.all(imagePromises);
 
-      // Generate PDF as blob
+      // Generate PDF as blob (using filename defined at start)
       const opt = {
         margin: 12,
-        filename: `defect-report-${defect.asset}-${Date.now()}.pdf`,
+        filename: filename,
         image: { type: 'jpeg', quality: 0.98 },
         html2canvas: { 
           scale: 2,
@@ -1037,22 +1056,9 @@ function DefectsPage({ activeTab }) {
 
       // Generate PDF from cloned element with embedded images
       const pdfBlob = await html2pdf().set(opt).from(clonedElement).outputPdf('blob');
-      const dateStr = new Date().toISOString().split('T')[0];
-      const shortDesc = (defect.title || 'Report').substring(0, 30).replace(/[^a-zA-Z0-9]/g, '-');
-      const filename = `Defect-Report-${defect.asset}-${shortDesc}-${dateStr}.pdf`;
 
       console.log("Uploading PDF to Google Drive...");
       await uploadToGoogleDrive(pdfBlob, filename);
-      
-      // Log the Drive save activity
-      const { data: auth } = await supabase.auth.getUser();
-      const performer = auth?.user?.email ?? "Admin Portal";
-      
-      await supabase.from("defect_activity").insert({
-        defect_id: defect.id,
-        message: `PDF report saved to Google Drive: ${filename}`,
-        performed_by: performer
-      });
       
       alert(`Report PDF saved to Google Drive successfully!`);
     } catch (err) {
