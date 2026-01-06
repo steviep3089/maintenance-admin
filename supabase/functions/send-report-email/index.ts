@@ -22,9 +22,17 @@ serve(async (req) => {
     const { to, subject, html, pdfBase64, filename } = await req.json()
     
     console.log('Sending email to:', to, 'with PDF:', !!pdfBase64)
+    console.log('GMAIL_USER:', GMAIL_USER ? 'set' : 'MISSING')
+    console.log('GMAIL_APP_PASSWORD:', GMAIL_APP_PASSWORD ? 'set' : 'MISSING')
+
+    if (!GMAIL_USER || !GMAIL_APP_PASSWORD) {
+      throw new Error('Gmail credentials not configured in Supabase secrets')
+    }
 
     // Connect to Gmail SMTP
     const client = new SmtpClient()
+    
+    console.log('Attempting to connect to Gmail SMTP...')
     
     await client.connectTLS({
       hostname: "smtp.gmail.com",
