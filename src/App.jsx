@@ -809,6 +809,7 @@ function DefectsPage({ activeTab }) {
         return;
       }
 
+      console.log("Starting PDF generation...");
       alert("Generating PDF... This may take a moment.");
 
       // Get the report content element
@@ -818,9 +819,11 @@ function DefectsPage({ activeTab }) {
         return;
       }
 
+      console.log("Cloning element...");
       // Clone the report element to avoid modifying the original
       const clonedElement = reportElement.cloneNode(true);
       
+      console.log("Converting images...");
       // Convert all images to base64 data URLs
       const images = clonedElement.getElementsByTagName('img');
       const imagePromises = [];
@@ -855,6 +858,7 @@ function DefectsPage({ activeTab }) {
       // Wait for all images to be converted
       await Promise.all(imagePromises);
 
+      console.log("Generating PDF blob...");
       // Generate PDF as blob
       const opt = {
         margin: 12,
@@ -871,6 +875,7 @@ function DefectsPage({ activeTab }) {
       // Generate PDF from cloned element with embedded images
       const pdfBlob = await html2pdf().set(opt).from(clonedElement).outputPdf('blob');
       
+      console.log("Converting to base64...");
       // Convert blob to base64
       const reader = new FileReader();
       const base64Promise = new Promise((resolve) => {
