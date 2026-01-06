@@ -730,24 +730,16 @@ function DefectsPage({ activeTab }) {
 
       console.log("All users from list-users:", data.users);
 
-      // Get admin user IDs
-      const { data: adminRoles, error: roleError } = await supabase
-        .from("user_roles")
-        .select("user_id")
-        .eq("role", "admin");
+      // Get admin user IDs (using service_role via edge function to bypass RLS)
+      const { data: rolesData, error: roleError } = await supabase.functions.invoke('get-admin-users');
 
       if (roleError) throw roleError;
 
-      console.log("Admin roles from user_roles:", adminRoles);
+      console.log("Admin users response:", rolesData);
 
-      const adminUserIds = adminRoles.map(r => r.user_id);
-      
-      // Filter to only admin users
-      const adminEmails = (data.users || [])
-        .filter(u => adminUserIds.includes(u.id))
-        .map(u => u.email);
+      const adminEmails = rolesData.adminEmails || [];
 
-      console.log("Filtered admin emails:", adminEmails);
+      console.log("Admin emails for dropdown:", adminEmails);
       setAdminUsers(adminEmails);
     } catch (err) {
       console.error("Error loading admin users:", err);
