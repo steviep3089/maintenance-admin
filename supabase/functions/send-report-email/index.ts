@@ -1,7 +1,9 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { SmtpClient } from "https://deno.land/x/smtp@v0.7.0/mod.ts"
 
-const RESEND_API_KEY = Deno.env.get('RESEND_API_KEY')
+const GMAIL_USER = Deno.env.get('GMAIL_USER')!
+const GMAIL_APP_PASSWORD = Deno.env.get('GMAIL_APP_PASSWORD')!
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
 
@@ -21,50 +23,48 @@ serve(async (req) => {
     
     console.log('Sending email to:', to, 'with PDF:', !!pdfBase64)
 
-    const emailBody: Record<string, any> = {
-      from: 'Maintenance Portal <onboarding@resend.dev>',
-      to: [to],
+    // Connect to Gmail SMTP
+    const client = new SmtpClient()
+    
+    await client.connectTLS({
+      hostname: "smtp.gmail.com",
+      port: 465,
+      username: GMAIL_USER,
+      password: GMAIL_APP_PASSWORD,
+    })
+
+    console.log('Connected to Gmail SMTP')
+
+    // Prepare email
+    const emailContent = {
+      from: GMAIL_USER,
+      to: to,
       subject: subject,
+      content: html || '<p>Please find attached the defect report PDF.</p>',
       html: html || '<p>Please find attached the defect report PDF.</p>',
     }
 
-    // If PDF attachment provided, add it
+    // Add PDF attachment if provided
     if (pdfBase64 && filename) {
       console.log('Adding PDF attachment:', filename)
-      emailBody.attachments = [
+      emailContent.attachments = [
         {
           filename: filename,
           content: pdfBase64,
+          encoding: "base64",
+          contentType: "application/pdf"
         }
       ]
     }
 
-    console.log('Calling Resend API...')
+    // Send email
+    await client.send(emailContent)
+    await client.close()
 
-    // Use Resend API
-    const res = await fetch('https://api.resend.com/emails', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${RESEND_API_KEY}`,
-      },
-      body: JSON.stringify(emailBody),
-    })
-
-    const data = await res.json()
-    console.log('Resend response status:', res.status)
-    console.log('Resend response data:', data)
-
-    if (!res.ok) {
-      console.error('Resend error:', data)
-      return new Response(
-        JSON.stringify({ error: 'Resend API error', details: data }),
-        { status: res.status, headers: { ...corsHeaders, "Content-Type": "application/json" } },
-      )
-    }
+    console.log('Email sent successfully via Gmail SMTP')
 
     return new Response(
-      JSON.stringify({ success: true, data }),
+      JSON.stringify({ success: true, message: 'Email sent successfully' }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } },
     )
   } catch (error) {

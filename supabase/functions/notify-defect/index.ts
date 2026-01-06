@@ -1,7 +1,9 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { SmtpClient } from "https://deno.land/x/smtp@v0.7.0/mod.ts"
 
-const RESEND_API_KEY = Deno.env.get('RESEND_API_KEY')
+const GMAIL_USER = Deno.env.get('GMAIL_USER')!
+const GMAIL_APP_PASSWORD = Deno.env.get('GMAIL_APP_PASSWORD')!
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
 
@@ -165,34 +167,36 @@ serve(async (req) => {
       </html>
     `
 
-    // Send email to all admins
+    // Send email to all admins using Gmail SMTP
+    const client = new SmtpClient()
+    
+    await client.connectTLS({
+      hostname: "smtp.gmail.com",
+      port: 465,
+      username: GMAIL_USER,
+      password: GMAIL_APP_PASSWORD,
+    })
+
     const emailPromises = adminEmails.map(async (email) => {
-      const res = await fetch('https://api.resend.com/emails', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${RESEND_API_KEY}`,
-        },
-        body: JSON.stringify({
-          from: 'Maintenance Portal <onboarding@resend.dev>',
-          to: [email],
+      try {
+        await client.send({
+          from: GMAIL_USER,
+          to: email,
           subject: subject,
+          content: html,
           html: html,
-        }),
-      })
-
-      const data = await res.json()
-      
-      if (!res.ok) {
-        console.error(`Failed to send to ${email}:`, data)
-        return { email, success: false, error: data }
+        })
+        console.log(`Email sent to ${email}`)
+        return { email, success: true }
+      } catch (error) {
+        console.error(`Failed to send to ${email}:`, error)
+        return { email, success: false, error: error.message }
       }
-
-      console.log(`Email sent to ${email}`)
-      return { email, success: true, data }
     })
 
     const results = await Promise.all(emailPromises)
+    await client.close()
+    
     const successCount = results.filter(r => r.success).length
 
     return new Response(
