@@ -1,102 +1,92 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 
+const RESEND_API_KEY = Deno.env.get('RESEND_API_KEY')!
 const GMAIL_USER = Deno.env.get('GMAIL_USER')!
 const GMAIL_APP_PASSWORD = Deno.env.get('GMAIL_APP_PASSWORD')!
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
 
-// Simple SMTP with better error handling
-async function sendEmail(to: string, subject: string, html: string, attachment?: { filename: string, content: string }) {
-  let conn;
+// Gmail SMTP function for non-PDF emails (task assignments)
+async function sendViaGmail(to: string, subject: string, html: string) {
+  console.log('Using Gmail SMTP to send email to:', to)
+  const conn = await Deno.connectTls({
+    hostname: "smtp.gmail.com",
+    port: 465
+  })
+  
+  const encoder = new TextEncoder()
+  const decoder = new TextDecoder()
+  
+  async function readLine(conn: Deno.TlsConn): Promise<string> {
+    const buf = new Uint8Array(1024)
+    const n = await conn.read(buf)
+    if (!n) return ""
+    return decoder.decode(buf.subarray(0, n)).trim()
+  }
+  
+  async function writeLine(conn: Deno.TlsConn, line: string) {
+    await conn.write(encoder.encode(line + "\r\n"))
+  }
+  
   try {
-    console.log('Connecting to Gmail SMTP...')
-    conn = await Deno.connectTls({
-      hostname: "smtp.gmail.com",
-      port: 465,
-    })
-
-    const encoder = new TextEncoder()
-    const decoder = new TextDecoder()
+    let response = await readLine(conn)
+    console.log('SMTP:', response)
     
-    async function readResponse() {
-      const buffer = new Uint8Array(4096)
-      const n = await conn.read(buffer)
-      const response = decoder.decode(buffer.subarray(0, n || 0))
-      console.log('SMTP Response:', response.substring(0, 100))
-      return response
-    }
+    await writeLine(conn, `EHLO maintenance-portal`)
+    response = await readLine(conn)
+    console.log('SMTP:', response)
     
-    async function sendCommand(cmd: string) {
-      console.log('SMTP Command:', cmd.substring(0, 50))
-      await conn.write(encoder.encode(cmd + "\r\n"))
-      return await readResponse()
-    }
+    await writeLine(conn, `AUTH LOGIN`)
+    response = await readLine(conn)
+    console.log('SMTP:', response)
     
-    // Server greeting
-    await readResponse()
+    const usernameB64 = btoa(GMAIL_USER)
+    await writeLine(conn, usernameB64)
+    response = await readLine(conn)
+    console.log('SMTP:', response)
     
-    // EHLO
-    await sendCommand(`EHLO localhost`)
+    const passwordB64 = btoa(GMAIL_APP_PASSWORD)
+    await writeLine(conn, passwordB64)
+    response = await readLine(conn)
+    console.log('SMTP:', response)
     
-    // AUTH LOGIN
-    await sendCommand(`AUTH LOGIN`)
-    await sendCommand(btoa(GMAIL_USER))
-    await sendCommand(btoa(GMAIL_APP_PASSWORD))
+    await writeLine(conn, `MAIL FROM:<${GMAIL_USER}>`)
+    response = await readLine(conn)
+    console.log('SMTP:', response)
     
-    // MAIL FROM
-    await sendCommand(`MAIL FROM:<${GMAIL_USER}>`)
+    await writeLine(conn, `RCPT TO:<${to}>`)
+    response = await readLine(conn)
+    console.log('SMTP:', response)
     
-    // RCPT TO
-    await sendCommand(`RCPT TO:<${to}>`)
+    await writeLine(conn, `DATA`)
+    response = await readLine(conn)
+    console.log('SMTP:', response)
     
-    // DATA
-    await sendCommand(`DATA`)
+    const emailContent = [
+      `From: Maintenance Portal <${GMAIL_USER}>`,
+      `To: ${to}`,
+      `Subject: ${subject}`,
+      `Content-Type: text/html; charset=utf-8`,
+      ``,
+      html,
+      `.`
+    ].join('\r\n')
     
-    // Build email
-    const boundary = "----=_Part_" + Date.now()
-    let email = `From: ${GMAIL_USER}\r\n`
-    email += `To: ${to}\r\n`
-    email += `Subject: ${subject}\r\n`
-    email += `MIME-Version: 1.0\r\n`
-    email += `Content-Type: multipart/mixed; boundary="${boundary}"\r\n`
-    email += `\r\n`
-    email += `--${boundary}\r\n`
-    email += `Content-Type: text/html; charset=UTF-8\r\n`
-    email += `\r\n`
-    email += `${html}\r\n`
+    await conn.write(encoder.encode(emailContent + "\r\n"))
+    response = await readLine(conn)
+    console.log('SMTP:', response)
     
-    if (attachment) {
-      console.log('Adding attachment, size:', attachment.content.length)
-      email += `--${boundary}\r\n`
-      email += `Content-Type: application/pdf; name="${attachment.filename}"\r\n`
-      email += `Content-Transfer-Encoding: base64\r\n`
-      email += `Content-Disposition: attachment; filename="${attachment.filename}"\r\n`
-      email += `\r\n`
-      email += `${attachment.content}\r\n`
-    }
+    await writeLine(conn, `QUIT`)
+    response = await readLine(conn)
+    console.log('SMTP:', response)
     
-    email += `--${boundary}--\r\n`
-    email += `.\r\n`
-    
-    console.log('Sending email data...')
-    await conn.write(encoder.encode(email))
-    await readResponse()
-    
-    // QUIT
-    await sendCommand(`QUIT`)
-    console.log('Email sent successfully')
+    conn.close()
+    console.log('Gmail email sent successfully')
+    return { success: true }
   } catch (error) {
-    console.error('SMTP error:', error)
+    conn.close()
     throw error
-  } finally {
-    if (conn) {
-      try {
-        conn.close()
-      } catch (e) {
-        console.error('Error closing connection:', e)
-      }
-    }
   }
 }
 
@@ -115,13 +105,55 @@ serve(async (req) => {
     
     console.log('Sending email to:', to, 'with PDF:', !!pdfBase64)
 
-    const attachment = pdfBase64 && filename ? { filename, content: pdfBase64 } : undefined
-    await sendEmail(to, subject, html, attachment)
+    // Use Resend for PDF reports (admin only, fast & reliable for attachments)
+    // Use Gmail SMTP for non-PDF emails (task assignments to any user)
+    if (pdfBase64 && filename) {
+      console.log('Using Resend API for PDF report, attachment:', filename, 'Size:', pdfBase64.length)
+      
+      const emailPayload = {
+        from: 'Maintenance Portal <onboarding@resend.dev>',
+        to: [to],
+        subject: subject,
+        html: html || '<p>Please see the attached PDF report.</p>',
+        attachments: [{
+          filename: filename,
+          content: pdfBase64
+        }]
+      }
 
-    return new Response(
-      JSON.stringify({ success: true, message: 'Email sent successfully' }),
-      { headers: { ...corsHeaders, "Content-Type": "application/json" } },
-    )
+      console.log('Calling Resend API...')
+      const response = await fetch('https://api.resend.com/emails', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${RESEND_API_KEY}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(emailPayload)
+      })
+
+      const result = await response.json()
+      
+      if (!response.ok) {
+        console.error('Resend API error:', result)
+        throw new Error(result.message || 'Failed to send email via Resend')
+      }
+
+      console.log('Email sent successfully via Resend:', result.id)
+
+      return new Response(
+        JSON.stringify({ success: true, message: 'Email sent successfully via Resend', id: result.id }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      )
+    } else {
+      // No PDF, use Gmail SMTP for task assignments
+      console.log('Using Gmail SMTP for non-PDF email (task assignment)')
+      await sendViaGmail(to, subject, html)
+      
+      return new Response(
+        JSON.stringify({ success: true, message: 'Email sent successfully via Gmail SMTP' }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      )
+    }
   } catch (error) {
     console.error('Exception:', error)
     return new Response(
