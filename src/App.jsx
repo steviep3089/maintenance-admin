@@ -446,6 +446,20 @@ function ActionTaskPage() {
         <label style={{ display: "block", marginBottom: 5, fontWeight: 600 }}>
           Assign To
         </label>
+        <input
+          type="text"
+          placeholder="Search users..."
+          value={userSearchText}
+          onChange={(e) => setUserSearchText(e.target.value)}
+          style={{
+            width: "100%",
+            padding: 10,
+            borderRadius: 6,
+            border: "1px solid #ddd",
+            fontSize: 16,
+            marginBottom: 8
+          }}
+        />
         <select
           value={selectedUserId}
           onChange={(e) => setSelectedUserId(e.target.value)}
@@ -454,11 +468,13 @@ function ActionTaskPage() {
             padding: 10,
             borderRadius: 6,
             border: "1px solid #ddd",
-            fontSize: 16
+            fontSize: 16,
+            maxHeight: 200
           }}
+          size={5}
         >
           <option value="">-- Choose a user --</option>
-          {users.map((user) => (
+          {filteredUsers.map((user) => (
             <option key={user.id} value={user.email}>
               {user.email}
             </option>
@@ -542,45 +558,29 @@ function UserManagementPage() {
     setMessage("");
 
     try {
-      // Store current admin session
-      const currentSession = (await supabase.auth.getSession()).data.session;
-      
-      // Create auth user
-      const { data, error } = await supabase.auth.signUp({
-        email: newUserEmail,
-        password: newUserPassword,
-        options: {
-          emailRedirectTo: window.location.origin
+      // Call Supabase Edge Function to create user with proper permissions
+      const { data, error } = await supabase.functions.invoke('create-user', {
+        body: {
+          email: newUserEmail,
+          password: newUserPassword,
+          role: newUserRole
         }
       });
 
+      console.log('Create user response:', data, error);
+
       if (error) throw error;
-
-      // Add role to user_roles table
-      if (data.user) {
-        const { error: roleError } = await supabase
-          .from("user_roles")
-          .insert({
-            user_id: data.user.id,
-            role: newUserRole
-          });
-
-        if (roleError) throw roleError;
-        
-        // Restore admin session (signUp auto-logs in the new user)
-        if (currentSession) {
-          await supabase.auth.setSession({
-            access_token: currentSession.access_token,
-            refresh_token: currentSession.refresh_token
-          });
-        }
+      
+      if (!data.success) {
+        throw new Error(data.error || 'Failed to create user');
       }
 
-      setMessage(`✓ User created successfully: ${newUserEmail}`);
+      setMessage(`✓ User created successfully: ${newUserEmail} (${newUserRole})`);
       setNewUserEmail("");
       setNewUserPassword("");
       setNewUserRole("user");
     } catch (err) {
+      console.error('Create user error:', err);
       setMessage(`Error: ${err.message}`);
     } finally {
       setLoading(false);
@@ -870,7 +870,9 @@ function DefectsPage() {
       });
 
       const pdfBase64 = await base64Promise;
-      const filename = `Defect-Report-${defect.asset}.pdf`;
+      const dateStr = new Date().toISOString().split('T')[0];
+      const shortDesc = (defect.title || 'Report').substring(0, 30).replace(/[^a-zA-Z0-9]/g, '-');
+      const filename = `Defect-Report-${defect.asset}-${shortDesc}-${dateStr}.pdf`;
 
       console.log("Sending email with PDF to:", user.email);
 
@@ -962,7 +964,9 @@ function DefectsPage() {
 
       // Generate PDF from cloned element with embedded images
       const pdfBlob = await html2pdf().set(opt).from(clonedElement).outputPdf('blob');
-      const filename = `Defect-Report-${defect.asset}.pdf`;
+      const dateStr = new Date().toISOString().split('T')[0];
+      const shortDesc = (defect.title || 'Report').substring(0, 30).replace(/[^a-zA-Z0-9]/g, '-');
+      const filename = `Defect-Report-${defect.asset}-${shortDesc}-${dateStr}.pdf`;
 
       console.log("Uploading PDF to Google Drive...");
       await uploadToGoogleDrive(pdfBlob, filename);
@@ -996,11 +1000,12 @@ function DefectsPage() {
     const isOpen = expandedIds.includes(id);
 
     if (isOpen) {
-      setExpandedIds(expandedIds.filter((x) => x !== id));
+      setExpandedIds([]);
       return;
     }
 
-    setExpandedIds([...expandedIds, id]);
+    // Close all other defects and open only this one
+    setExpandedIds([id]);
 
     setEditState((prev) => {
       if (prev[id]) return prev;
@@ -1912,17 +1917,20 @@ function DefectsPage() {
               </button>
               <button
                 onClick={() => saveToDrive(selectedDefectForReport)}
+                disabled={selectedDefectForReport?.status !== "Completed"}
                 style={{
                   padding: "10px 20px",
                   borderRadius: 6,
                   border: "1px solid #10b981",
-                  backgroundColor: "white",
-                  color: "#10b981",
+                  backgroundColor: selectedDefectForReport?.status !== "Completed" ? "#e5e5e5" : "white",
+                  color: selectedDefectForReport?.status !== "Completed" ? "#999" : "#10b981",
                   fontWeight: 600,
-                  cursor: "pointer",
+                  cursor: selectedDefectForReport?.status !== "Completed" ? "not-allowed" : "pointer",
+                  opacity: selectedDefectForReport?.status !== "Completed" ? 0.5 : 1,
                 }}
+                title={selectedDefectForReport?.status !== "Completed" ? "Can only save completed defects to Drive" : ""}
               >
-                💾 Save to Drive
+                💾 Save to Drive {selectedDefectForReport?.status !== "Completed" && "(Completed Only)"}
               </button>
             </div>
           </div>
@@ -2314,21 +2322,26 @@ export default function App() {
             </p>
           </div>
         </div>
-        <button
-          onClick={() => supabase.auth.signOut()}
-          style={{
-            padding: "10px 20px",
-            borderRadius: 6,
-            border: "none",
-            backgroundColor: "#1d4ed8",
-            color: "#ffffff",
-            fontWeight: 600,
-            fontSize: 14,
-            cursor: "pointer",
-          }}
-        >
-          Sign out
-        </button>
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 5 }}>
+          <div style={{ fontSize: 14, color: "#666" }}>
+            Logged in as: <strong style={{ color: "#1d4ed8" }}>{session?.user?.email || "Unknown"}</strong>
+          </div>
+          <button
+            onClick={() => supabase.auth.signOut()}
+            style={{
+              padding: "8px 16px",
+              borderRadius: 6,
+              border: "none",
+              backgroundColor: "#1d4ed8",
+              color: "#ffffff",
+              fontWeight: 600,
+              fontSize: 14,
+              cursor: "pointer",
+            }}
+          >
+            Sign out
+          </button>
+        </div>
       </div>
 
       {/* Navigation Tabs */}
