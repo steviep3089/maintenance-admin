@@ -270,6 +270,8 @@ function ResetPasswordPage({ onDone }) {
 function ActionTaskPage() {
   const [defects, setDefects] = useState([]);
   const [users, setUsers] = useState([]);
+  const [filteredUsers, setFilteredUsers] = useState([]);
+  const [userSearchText, setUserSearchText] = useState("");
   const [selectedDefectId, setSelectedDefectId] = useState("");
   const [selectedUserId, setSelectedUserId] = useState("");
   const [dueDate, setDueDate] = useState("");
@@ -280,6 +282,16 @@ function ActionTaskPage() {
     loadDefects();
     loadUsers();
   }, []);
+
+  useEffect(() => {
+    // Filter users based on search text
+    if (!userSearchText.trim()) {
+      setFilteredUsers(users);
+    } else {
+      const search = userSearchText.toLowerCase();
+      setFilteredUsers(users.filter(u => u.email.toLowerCase().includes(search)));
+    }
+  }, [userSearchText, users]);
 
   async function loadDefects() {
     try {
@@ -292,37 +304,28 @@ function ActionTaskPage() {
       setDefects(data || []);
     } catch (err) {
       console.error("Error loading defects:", err);
+      setMessage("Error loading defects: " + err.message);
     }
   }
 
   async function loadUsers() {
     try {
-      // Get unique emails from defects (submitted_by field)
-      const { data: defectsData, error: defectsError } = await supabase
-        .from("defects")
-        .select("submitted_by");
+      // Fetch all users from Supabase Auth
+      const { data: authData, error: authError } = await supabase.auth.admin.listUsers();
 
-      if (defectsError) throw defectsError;
+      if (authError) throw authError;
 
-      // Get unique emails
-      const uniqueEmails = [...new Set(defectsData.map(d => d.submitted_by).filter(Boolean))];
-      
-      // Get roles for these users if available
-      const { data: rolesData } = await supabase
-        .from("user_roles")
-        .select("user_id, role");
-
-      // Create a map of user emails with roles
-      const usersWithRoles = uniqueEmails.map((email) => ({
-        id: email,
-        email: email,
-        role: 'user' // Default to user role
+      // Map auth users to our format
+      const allUsers = authData.users.map((user) => ({
+        id: user.id,
+        email: user.email,
       }));
 
-      setUsers(usersWithRoles);
+      setUsers(allUsers);
+      setFilteredUsers(allUsers);
       
-      if (usersWithRoles.length === 0) {
-        setMessage("No users found. Users will appear here after they submit defects.");
+      if (allUsers.length === 0) {
+        setMessage("No users found in the system.");
       }
     } catch (err) {
       console.error("Error loading users:", err);
