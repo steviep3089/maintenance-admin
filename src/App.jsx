@@ -1774,7 +1774,7 @@ function DefectsPage({ activeTab }) {
         </div>
       </main>
       <footer style={{ textAlign: "center", padding: "20px", color: "#999", fontSize: 12 }}>
-        Admin Portal v1.2.0
+        Admin Portal v2.0.0
       </footer>
 
       {/* REPORT MODAL */}
