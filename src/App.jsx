@@ -267,7 +267,7 @@ function ResetPasswordPage({ onDone }) {
    ACTION TASK PAGE
    =========================== */
 
-function ActionTaskPage() {
+function ActionTaskPage({ activeTab }) {
   const [defects, setDefects] = useState([]);
   const [users, setUsers] = useState([]);
   const [filteredUsers, setFilteredUsers] = useState([]);
@@ -279,9 +279,11 @@ function ActionTaskPage() {
   const [message, setMessage] = useState("");
 
   useEffect(() => {
-    loadDefects();
-    loadUsers();
-  }, []); // Loads on mount due to key prop forcing remount
+    if (activeTab === "tasks") {
+      loadDefects();
+      loadUsers();
+    }
+  }, [activeTab]);
 
   useEffect(() => {
     // Filter users based on search text
@@ -700,7 +702,7 @@ function UserManagementPage() {
    DEFECTS PAGE (ADMIN PORTAL)
    =========================== */
 
-function DefectsPage() {
+function DefectsPage({ activeTab }) {
   const [defects, setDefects] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -740,8 +742,10 @@ function DefectsPage() {
   }
 
   useEffect(() => {
-    loadDefects();
-  }, []); // Loads on mount due to key prop forcing remount
+    if (activeTab === "defects") {
+      loadDefects();
+    }
+  }, [activeTab]);
 
   // Upload PDF to Google Drive using new Google Identity Services
   async function uploadToGoogleDrive(pdfBlob, filename) {
@@ -2411,8 +2415,8 @@ export default function App() {
       </div>
 
       {/* Tab Content */}
-      {activeTab === "defects" && <DefectsPage key="defects" />}
-      {activeTab === "tasks" && <ActionTaskPage key="tasks" />}
+      {activeTab === "defects" && <DefectsPage activeTab={activeTab} key="defects" />}
+      {activeTab === "tasks" && <ActionTaskPage activeTab={activeTab} key="tasks" />}
       {activeTab === "users" && <UserManagementPage key="users" />}
     </div>
   );
