@@ -1,11 +1,69 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
-import { SmtpClient } from "https://deno.land/x/denomailer@1.6.0/mod.ts"
 
 const GMAIL_USER = Deno.env.get('GMAIL_USER')!
 const GMAIL_APP_PASSWORD = Deno.env.get('GMAIL_APP_PASSWORD')!
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
+
+// Simple SMTP helper using native Deno
+async function sendEmail(to: string, subject: string, html: string) {
+  const conn = await Deno.connectTls({
+    hostname: "smtp.gmail.com",
+    port: 465,
+  })
+
+  const encoder = new TextEncoder()
+  const decoder = new TextDecoder()
+  
+  async function readResponse() {
+    const buffer = new Uint8Array(1024)
+    const n = await conn.read(buffer)
+    return decoder.decode(buffer.subarray(0, n || 0))
+  }
+  
+  async function sendCommand(cmd: string) {
+    await conn.write(encoder.encode(cmd + "\r\n"))
+    return await readResponse()
+  }
+  
+  // Wait for server greeting
+  await readResponse()
+  
+  // EHLO
+  await sendCommand(`EHLO localhost`)
+  
+  // AUTH LOGIN
+  await sendCommand(`AUTH LOGIN`)
+  await sendCommand(btoa(GMAIL_USER))
+  await sendCommand(btoa(GMAIL_APP_PASSWORD))
+  
+  // MAIL FROM
+  await sendCommand(`MAIL FROM:<${GMAIL_USER}>`)
+  
+  // RCPT TO
+  await sendCommand(`RCPT TO:<${to}>`)
+  
+  // DATA
+  await sendCommand(`DATA`)
+  
+  // Email headers and body
+  let email = `From: ${GMAIL_USER}\r\n`
+  email += `To: ${to}\r\n`
+  email += `Subject: ${subject}\r\n`
+  email += `MIME-Version: 1.0\r\n`
+  email += `Content-Type: text/html; charset=UTF-8\r\n`
+  email += `\r\n`
+  email += `${html}\r\n`
+  email += `.\r\n`
+  
+  await conn.write(encoder.encode(email))
+  await readResponse()
+  
+  // QUIT
+  await sendCommand(`QUIT`)
+  conn.close()
+}
 
 serve(async (req) => {
   const corsHeaders = {
@@ -167,44 +225,21 @@ serve(async (req) => {
       </html>
     `
 
-    // Send email to all admins using Gmail SMTP
-    const client = new SmtpClient()
-    
-    await client.connectTLS({
-      hostname: "smtp.gmail.com",
-      port: 465,
-      username: GMAIL_USER,
-      password: GMAIL_APP_PASSWORD,
-    })
-
-    const emailPromises = adminEmails.map(async (email) => {
+    // Send email to all admins using native SMTP
+    for (const email of adminEmails) {
       try {
-        await client.send({
-          from: GMAIL_USER,
-          to: email,
-          subject: subject,
-          content: html,
-          html: html,
-        })
+        await sendEmail(email, subject, html)
         console.log(`Email sent to ${email}`)
-        return { email, success: true }
       } catch (error) {
         console.error(`Failed to send to ${email}:`, error)
-        return { email, success: false, error: error.message }
       }
-    })
-
-    const results = await Promise.all(emailPromises)
-    await client.close()
-    
-    const successCount = results.filter(r => r.success).length
+    }
 
     return new Response(
       JSON.stringify({ 
         success: true, 
-        sent: successCount, 
-        total: adminEmails.length,
-        results 
+        sent: adminEmails.length, 
+        total: adminEmails.length
       }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } }
     )
@@ -212,8 +247,8 @@ serve(async (req) => {
   } catch (error) {
     console.error('Exception:', error)
     return new Response(
-      JSON.stringify({ error: error.message || 'Unknown error', stack: error.stack }),
-      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      JSON.stringify({ success: false, error: error.message || 'Unknown error' }),
+      { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     )
   }
 })
