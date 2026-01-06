@@ -779,6 +779,11 @@ function DefectsPage({ activeTab }) {
     }
   }, [activeTab]);
 
+  // Reset selected recipient when modal opens/closes
+  useEffect(() => {
+    setSelectedRecipientEmail("");
+  }, [selectedDefectForReport]);
+
   // Upload PDF to Google Drive using new Google Identity Services
   async function uploadToGoogleDrive(pdfBlob, filename) {
     try {
