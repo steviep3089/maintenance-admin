@@ -557,6 +557,55 @@ function UserManagementPage() {
   const [newUserRole, setNewUserRole] = useState("user");
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState("");
+  
+  // For viewing current users
+  const [showUsersList, setShowUsersList] = useState(false);
+  const [allUsers, setAllUsers] = useState([]);
+  const [userRoles, setUserRoles] = useState({});
+  const [loadingUsers, setLoadingUsers] = useState(false);
+  const [searchText, setSearchText] = useState("");
+
+  async function loadAllUsers() {
+    setLoadingUsers(true);
+    try {
+      // Get all users
+      const { data: usersData, error: usersError } = await supabase.functions.invoke('list-users');
+      if (usersError) throw usersError;
+      if (!usersData.success) throw new Error(usersData.error);
+
+      // Get all user roles
+      const { data: rolesData, error: rolesError } = await supabase
+        .from('user_roles')
+        .select('user_id, role');
+      
+      if (rolesError) throw rolesError;
+
+      // Map user_id to role
+      const rolesMap = {};
+      rolesData.forEach(r => {
+        rolesMap[r.user_id] = r.role;
+      });
+
+      setAllUsers(usersData.users || []);
+      setUserRoles(rolesMap);
+    } catch (err) {
+      console.error('Error loading users:', err);
+      setMessage(`Error loading users: ${err.message}`);
+    } finally {
+      setLoadingUsers(false);
+    }
+  }
+
+  function toggleUsersList() {
+    if (!showUsersList && allUsers.length === 0) {
+      loadAllUsers();
+    }
+    setShowUsersList(!showUsersList);
+  }
+
+  const filteredUsers = allUsers.filter(user => 
+    user.email.toLowerCase().includes(searchText.toLowerCase())
+  );
 
   async function createUser() {
     if (!newUserEmail.trim() || !newUserPassword.trim()) {
@@ -694,6 +743,117 @@ function UserManagementPage() {
           {message}
         </div>
       )}
+
+      {/* Current Users and Roles Section */}
+      <div style={{ marginTop: 40, borderTop: "2px solid #e5e7eb", paddingTop: 30 }}>
+        <button
+          onClick={toggleUsersList}
+          style={{
+            width: "100%",
+            padding: "12px 16px",
+            backgroundColor: "#f3f4f6",
+            border: "1px solid #d1d5db",
+            borderRadius: 6,
+            fontSize: 16,
+            fontWeight: 600,
+            cursor: "pointer",
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+          }}
+        >
+          <span>Current Users and Roles ({allUsers.length})</span>
+          <span>{showUsersList ? "▼" : "▶"}</span>
+        </button>
+
+        {showUsersList && (
+          <div style={{ marginTop: 20 }}>
+            {loadingUsers ? (
+              <p style={{ textAlign: "center", color: "#666" }}>Loading users...</p>
+            ) : (
+              <>
+                {/* Search Box */}
+                <div style={{ marginBottom: 15 }}>
+                  <input
+                    type="text"
+                    placeholder="Search users by email..."
+                    value={searchText}
+                    onChange={(e) => setSearchText(e.target.value)}
+                    style={{
+                      width: "100%",
+                      padding: 10,
+                      borderRadius: 6,
+                      border: "1px solid #ddd",
+                      fontSize: 14
+                    }}
+                  />
+                </div>
+
+                {/* Users List */}
+                {filteredUsers.length === 0 ? (
+                  <p style={{ textAlign: "center", color: "#666" }}>No users found</p>
+                ) : (
+                  <div style={{ 
+                    border: "1px solid #e5e7eb", 
+                    borderRadius: 6,
+                    maxHeight: 400,
+                    overflowY: "auto"
+                  }}>
+                    {filteredUsers.map((user, index) => {
+                      const role = userRoles[user.id] || "user";
+                      return (
+                        <div
+                          key={user.id}
+                          style={{
+                            padding: "12px 16px",
+                            borderBottom: index < filteredUsers.length - 1 ? "1px solid #e5e7eb" : "none",
+                            display: "flex",
+                            justifyContent: "space-between",
+                            alignItems: "center",
+                            backgroundColor: index % 2 === 0 ? "#fff" : "#f9fafb"
+                          }}
+                        >
+                          <span style={{ fontSize: 14, color: "#111827" }}>{user.email}</span>
+                          <span
+                            style={{
+                              fontSize: 12,
+                              fontWeight: 600,
+                              padding: "4px 12px",
+                              borderRadius: 12,
+                              backgroundColor: role === "admin" ? "#dbeafe" : "#f3f4f6",
+                              color: role === "admin" ? "#1e40af" : "#6b7280"
+                            }}
+                          >
+                            {role.toUpperCase()}
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+
+                {/* Refresh Button */}
+                <button
+                  onClick={loadAllUsers}
+                  disabled={loadingUsers}
+                  style={{
+                    marginTop: 15,
+                    padding: "8px 16px",
+                    backgroundColor: "#fff",
+                    border: "1px solid #d1d5db",
+                    borderRadius: 6,
+                    fontSize: 14,
+                    cursor: loadingUsers ? "not-allowed" : "pointer",
+                    opacity: loadingUsers ? 0.6 : 1,
+                  }}
+                >
+                  {loadingUsers ? "Refreshing..." : "🔄 Refresh List"}
+                </button>
+              </>
+            )}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
