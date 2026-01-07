@@ -647,212 +647,217 @@ function UserManagementPage() {
   }
 
   return (
-    <div style={{ padding: 30, maxWidth: 600, margin: "0 auto" }}>
+    <div style={{ padding: 30, maxWidth: 1400, margin: "0 auto" }}>
       <h2 style={{ marginBottom: 20 }}>User Management</h2>
       <p style={{ color: "#666", marginBottom: 30 }}>
         Create new user accounts for the mobile app.
       </p>
 
-      <div style={{ marginBottom: 15 }}>
-        <label style={{ display: "block", marginBottom: 5, fontWeight: 600 }}>
-          Email
-        </label>
-        <input
-          type="email"
-          value={newUserEmail}
-          onChange={(e) => setNewUserEmail(e.target.value)}
-          placeholder="user@company.com"
-          style={{
-            width: "100%",
-            padding: 10,
-            borderRadius: 6,
-            border: "1px solid #ddd",
-            fontSize: 16
-          }}
-        />
-      </div>
+      <div style={{ display: "flex", gap: 40, alignItems: "flex-start" }}>
+        {/* Left Column - Create User Form */}
+        <div style={{ flex: "0 0 500px" }}>
+          <div style={{ marginBottom: 15 }}>
+            <label style={{ display: "block", marginBottom: 5, fontWeight: 600 }}>
+              Email
+            </label>
+            <input
+              type="email"
+              value={newUserEmail}
+              onChange={(e) => setNewUserEmail(e.target.value)}
+              placeholder="user@company.com"
+              style={{
+                width: "100%",
+                padding: 10,
+                borderRadius: 6,
+                border: "1px solid #ddd",
+                fontSize: 16
+              }}
+            />
+          </div>
 
-      <div style={{ marginBottom: 15 }}>
-        <label style={{ display: "block", marginBottom: 5, fontWeight: 600 }}>
-          Password
-        </label>
-        <input
-          type="password"
-          value={newUserPassword}
-          onChange={(e) => setNewUserPassword(e.target.value)}
-          placeholder="Minimum 6 characters"
-          style={{
-            width: "100%",
-            padding: 10,
-            borderRadius: 6,
-            border: "1px solid #ddd",
-            fontSize: 16
-          }}
-        />
-      </div>
+          <div style={{ marginBottom: 15 }}>
+            <label style={{ display: "block", marginBottom: 5, fontWeight: 600 }}>
+              Password
+            </label>
+            <input
+              type="password"
+              value={newUserPassword}
+              onChange={(e) => setNewUserPassword(e.target.value)}
+              placeholder="Minimum 6 characters"
+              style={{
+                width: "100%",
+                padding: 10,
+                borderRadius: 6,
+                border: "1px solid #ddd",
+                fontSize: 16
+              }}
+            />
+          </div>
 
-      <div style={{ marginBottom: 25 }}>
-        <label style={{ display: "block", marginBottom: 5, fontWeight: 600 }}>
-          Role
-        </label>
-        <select
-          value={newUserRole}
-          onChange={(e) => setNewUserRole(e.target.value)}
-          style={{
-            width: "100%",
-            padding: 10,
-            borderRadius: 6,
-            border: "1px solid #ddd",
-            fontSize: 16
-          }}
-        >
-          <option value="user">User (Mobile App Only)</option>
-          <option value="admin">Admin (Full Access)</option>
-        </select>
-      </div>
+          <div style={{ marginBottom: 25 }}>
+            <label style={{ display: "block", marginBottom: 5, fontWeight: 600 }}>
+              Role
+            </label>
+            <select
+              value={newUserRole}
+              onChange={(e) => setNewUserRole(e.target.value)}
+              style={{
+                width: "100%",
+                padding: 10,
+                borderRadius: 6,
+                border: "1px solid #ddd",
+                fontSize: 16
+              }}
+            >
+              <option value="user">User (Mobile App Only)</option>
+              <option value="admin">Admin (Full Access)</option>
+            </select>
+          </div>
 
-      <button
-        onClick={createUser}
-        disabled={loading}
-        style={{
-          backgroundColor: "#22c55e",
-          color: "white",
-          padding: "12px 24px",
-          borderRadius: 6,
-          border: "none",
-          fontSize: 16,
-          fontWeight: 600,
-          cursor: loading ? "not-allowed" : "pointer",
-          opacity: loading ? 0.6 : 1,
-          width: "100%"
-        }}
-      >
-        {loading ? "Creating..." : "Create User"}
-      </button>
+          <button
+            onClick={createUser}
+            disabled={loading}
+            style={{
+              backgroundColor: "#22c55e",
+              color: "white",
+              padding: "12px 24px",
+              borderRadius: 6,
+              border: "none",
+              fontSize: 16,
+              fontWeight: 600,
+              cursor: loading ? "not-allowed" : "pointer",
+              opacity: loading ? 0.6 : 1,
+              width: "100%"
+            }}
+          >
+            {loading ? "Creating..." : "Create User"}
+          </button>
 
-      {message && (
-        <div
-          style={{
-            marginTop: 20,
-            padding: 12,
-            borderRadius: 6,
-            backgroundColor: message.startsWith("✓") ? "#dcfce7" : "#fee2e2",
-            color: message.startsWith("✓") ? "#166534" : "#991b1b",
-          }}
-        >
-          {message}
+          {message && (
+            <div
+              style={{
+                marginTop: 20,
+                padding: 12,
+                borderRadius: 6,
+                backgroundColor: message.startsWith("✓") ? "#dcfce7" : "#fee2e2",
+                color: message.startsWith("✓") ? "#166534" : "#991b1b",
+              }}
+            >
+              {message}
+            </div>
+          )}
         </div>
-      )}
 
-      {/* Current Users and Roles Section */}
-      <div style={{ marginTop: 40, borderTop: "2px solid #e5e7eb", paddingTop: 30 }}>
-        <button
-          onClick={toggleUsersList}
-          style={{
-            width: "100%",
-            padding: "12px 16px",
-            backgroundColor: "#f3f4f6",
-            border: "1px solid #d1d5db",
-            borderRadius: 6,
-            fontSize: 16,
-            fontWeight: 600,
-            cursor: "pointer",
-            display: "flex",
-            justifyContent: "space-between",
-            alignItems: "center",
-          }}
-        >
-          <span>Current Users and Roles ({allUsers.length})</span>
-          <span>{showUsersList ? "▼" : "▶"}</span>
-        </button>
+        {/* Right Column - Current Users and Roles */}
+        <div style={{ flex: 1 }}>
+          <button
+            onClick={toggleUsersList}
+            style={{
+              width: "100%",
+              padding: "12px 16px",
+              backgroundColor: "#f3f4f6",
+              border: "1px solid #d1d5db",
+              borderRadius: 6,
+              fontSize: 16,
+              fontWeight: 600,
+              cursor: "pointer",
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+            }}
+          >
+            <span>Current Users and Roles ({allUsers.length})</span>
+            <span>{showUsersList ? "▼" : "▶"}</span>
+          </button>
 
-        {showUsersList && (
-          <div style={{ marginTop: 20 }}>
-            {loadingUsers ? (
-              <p style={{ textAlign: "center", color: "#666" }}>Loading users...</p>
-            ) : (
-              <>
-                {/* Search Box */}
-                <div style={{ marginBottom: 15 }}>
-                  <input
-                    type="text"
-                    placeholder="Search users by email..."
-                    value={searchText}
-                    onChange={(e) => setSearchText(e.target.value)}
-                    style={{
-                      width: "100%",
-                      padding: 10,
+          {showUsersList && (
+            <div style={{ marginTop: 20 }}>
+              {loadingUsers ? (
+                <p style={{ textAlign: "center", color: "#666" }}>Loading users...</p>
+              ) : (
+                <>
+                  {/* Search Box */}
+                  <div style={{ marginBottom: 15 }}>
+                    <input
+                      type="text"
+                      placeholder="Search users by email..."
+                      value={searchText}
+                      onChange={(e) => setSearchText(e.target.value)}
+                      style={{
+                        width: "100%",
+                        padding: 10,
+                        borderRadius: 6,
+                        border: "1px solid #ddd",
+                        fontSize: 14
+                      }}
+                    />
+                  </div>
+
+                  {/* Users List */}
+                  {filteredUsers.length === 0 ? (
+                    <p style={{ textAlign: "center", color: "#666" }}>No users found</p>
+                  ) : (
+                    <div style={{ 
+                      border: "1px solid #e5e7eb", 
                       borderRadius: 6,
-                      border: "1px solid #ddd",
-                      fontSize: 14
-                    }}
-                  />
-                </div>
-
-                {/* Users List */}
-                {filteredUsers.length === 0 ? (
-                  <p style={{ textAlign: "center", color: "#666" }}>No users found</p>
-                ) : (
-                  <div style={{ 
-                    border: "1px solid #e5e7eb", 
-                    borderRadius: 6,
-                    maxHeight: 400,
-                    overflowY: "auto"
-                  }}>
-                    {filteredUsers.map((user, index) => {
-                      const role = userRoles[user.id] || "user";
-                      return (
-                        <div
-                          key={user.id}
-                          style={{
-                            padding: "12px 16px",
-                            borderBottom: index < filteredUsers.length - 1 ? "1px solid #e5e7eb" : "none",
-                            display: "flex",
-                            justifyContent: "space-between",
-                            alignItems: "center",
-                            backgroundColor: index % 2 === 0 ? "#fff" : "#f9fafb"
-                          }}
-                        >
-                          <span style={{ fontSize: 14, color: "#111827" }}>{user.email}</span>
-                          <span
+                      maxHeight: 500,
+                      overflowY: "auto"
+                    }}>
+                      {filteredUsers.map((user, index) => {
+                        const role = userRoles[user.id] || "user";
+                        return (
+                          <div
+                            key={user.id}
                             style={{
-                              fontSize: 12,
-                              fontWeight: 600,
-                              padding: "4px 12px",
-                              borderRadius: 12,
-                              backgroundColor: role === "admin" ? "#dbeafe" : "#f3f4f6",
-                              color: role === "admin" ? "#1e40af" : "#6b7280"
+                              padding: "12px 16px",
+                              borderBottom: index < filteredUsers.length - 1 ? "1px solid #e5e7eb" : "none",
+                              display: "flex",
+                              justifyContent: "space-between",
+                              alignItems: "center",
+                              backgroundColor: index % 2 === 0 ? "#fff" : "#f9fafb"
                             }}
                           >
-                            {role.toUpperCase()}
-                          </span>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
+                            <span style={{ fontSize: 14, color: "#111827" }}>{user.email}</span>
+                            <span
+                              style={{
+                                fontSize: 12,
+                                fontWeight: 600,
+                                padding: "4px 12px",
+                                borderRadius: 12,
+                                backgroundColor: role === "admin" ? "#dbeafe" : "#f3f4f6",
+                                color: role === "admin" ? "#1e40af" : "#6b7280"
+                              }}
+                            >
+                              {role.toUpperCase()}
+                            </span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
 
-                {/* Refresh Button */}
-                <button
-                  onClick={loadAllUsers}
-                  disabled={loadingUsers}
-                  style={{
-                    marginTop: 15,
-                    padding: "8px 16px",
-                    backgroundColor: "#fff",
-                    border: "1px solid #d1d5db",
-                    borderRadius: 6,
-                    fontSize: 14,
-                    cursor: loadingUsers ? "not-allowed" : "pointer",
-                    opacity: loadingUsers ? 0.6 : 1,
-                  }}
-                >
-                  {loadingUsers ? "Refreshing..." : "🔄 Refresh List"}
-                </button>
-              </>
-            )}
-          </div>
-        )}
+                  {/* Refresh Button */}
+                  <button
+                    onClick={loadAllUsers}
+                    disabled={loadingUsers}
+                    style={{
+                      marginTop: 15,
+                      padding: "8px 16px",
+                      backgroundColor: "#fff",
+                      border: "1px solid #d1d5db",
+                      borderRadius: 6,
+                      fontSize: 14,
+                      cursor: loadingUsers ? "not-allowed" : "pointer",
+                      opacity: loadingUsers ? 0.6 : 1,
+                    }}
+                  >
+                    {loadingUsers ? "Refreshing..." : "🔄 Refresh List"}
+                  </button>
+                </>
+              )}
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );
