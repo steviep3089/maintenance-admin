@@ -696,6 +696,7 @@ function UserManagementPage() {
   const [allUsers, setAllUsers] = useState([]);
   const [userRoles, setUserRoles] = useState({});
   const [loadingUsers, setLoadingUsers] = useState(false);
+  const [userLoadError, setUserLoadError] = useState("");
   const [searchText, setSearchText] = useState("");
   const [deletingUserId, setDeletingUserId] = useState(null);
   const isLocalhost =
@@ -753,10 +754,10 @@ function UserManagementPage() {
 
       setAllUsers(usersData.users || []);
       setUserRoles(rolesMap);
-      setMessage("");
+      setUserLoadError("");
     } catch (err) {
       console.error('Error loading users:', err);
-      setMessage(`Error loading users: ${err.message}`);
+      setUserLoadError(`Error loading users: ${err.message}`);
     } finally {
       setLoadingUsers(false);
     }
@@ -959,6 +960,36 @@ function UserManagementPage() {
               <p style={{ textAlign: "center", color: "#666" }}>Loading users...</p>
             ) : (
               <>
+                {userLoadError && (
+                  <div
+                    style={{
+                      marginBottom: 12,
+                      padding: 10,
+                      borderRadius: 6,
+                      backgroundColor: "#fee2e2",
+                      color: "#991b1b",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "space-between",
+                      gap: 12,
+                    }}
+                  >
+                    <span>{userLoadError}</span>
+                    <button
+                      onClick={loadAllUsers}
+                      style={{
+                        border: "none",
+                        backgroundColor: "#991b1b",
+                        color: "#fff",
+                        padding: "6px 10px",
+                        borderRadius: 6,
+                        cursor: "pointer",
+                      }}
+                    >
+                      Retry
+                    </button>
+                  </div>
+                )}
                 {/* Search Box */}
                 <div style={{ marginBottom: 15 }}>
                   <input
@@ -1118,14 +1149,12 @@ function DefectsPage({ activeTab }) {
       if (error) {
         console.error(error);
         setError(error.message);
-        setDefects([]);
       } else {
         setDefects(data || []);
       }
     } catch (err) {
       console.error(err);
       setError("Unexpected error while loading defects.");
-      setDefects([]);
     }
     
     setLoading(false);
@@ -1860,6 +1889,25 @@ function DefectsPage({ activeTab }) {
       <main className="app-main">
         <div className="table-wrapper">
           {error && <div className="error-banner">{error}</div>}
+          {error && (
+            <div style={{ marginBottom: 12 }}>
+              <button
+                onClick={loadDefects}
+                disabled={loading}
+                style={{
+                  padding: "8px 12px",
+                  borderRadius: 6,
+                  border: "1px solid #d1d5db",
+                  backgroundColor: loading ? "#e5e7eb" : "#ffffff",
+                  color: "#374151",
+                  fontWeight: 600,
+                  cursor: loading ? "not-allowed" : "pointer",
+                }}
+              >
+                {loading ? "Loading..." : "Retry loading defects"}
+              </button>
+            </div>
+          )}
 
           {/* Filters */}
           <div className="filters-row" style={{ justifyContent: "space-between" }}>
