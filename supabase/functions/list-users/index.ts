@@ -31,10 +31,25 @@ serve(async (req) => {
       throw authError
     }
 
+    const { data: rolesData, error: rolesError } = await supabase
+      .from("user_roles")
+      .select("user_id, role")
+
+    if (rolesError) {
+      console.error("Role load error:", rolesError)
+      throw rolesError
+    }
+
+    const rolesMap: Record<string, string> = {}
+    rolesData.forEach((row) => {
+      rolesMap[row.user_id] = row.role
+    })
+
     // Map to simple format
     const users = authData.users.map((user) => ({
       id: user.id,
       email: user.email,
+      role: rolesMap[user.id] || "user",
     }))
 
     return new Response(

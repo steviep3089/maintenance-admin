@@ -31,33 +31,80 @@ function formatDateTime(value) {
   return d.toLocaleString();
 }
 
+function getAuthFlowFromUrl() {
+  if (typeof window === "undefined") {
+    return { type: null, from: null, pathname: "" };
+  }
+  const url = new URL(window.location.href);
+  const searchType = url.searchParams.get("type");
+  const from = url.searchParams.get("from");
+  let hashType = null;
+  if (url.hash) {
+    const hashParams = new URLSearchParams(
+      url.hash.startsWith("#") ? url.hash.substring(1) : url.hash
+    );
+    hashType = hashParams.get("type");
+  }
+  return {
+    type: searchType || hashType,
+    from,
+    pathname: url.pathname,
+  };
+}
+
 // detect if URL contains a Supabase recovery link
 function isRecoveryUrl() {
-  if (typeof window === "undefined") return false;
-  const hash = window.location.hash || "";
-  const search = window.location.search || "";
-  const pathname = window.location.pathname || "";
+  const { type, from, pathname } = getAuthFlowFromUrl();
+  return type === "recovery" || from === "recovery" || pathname === "/reset";
+}
+
+function isPasswordSetupUrl() {
+  const { type, from } = getAuthFlowFromUrl();
   return (
-    hash.includes("type=recovery") ||
-    search.includes("type=recovery") ||
-    pathname === "/reset"
+    type === "signup" ||
+    type === "invite" ||
+    from === "signup" ||
+    from === "invite"
   );
+}
+
+function needsPasswordSetup(currentSession) {
+  const user = currentSession?.user;
+  const invited = user?.invited_at || user?.user_metadata?.invited;
+  return !!(invited && user?.user_metadata?.password_set !== true);
 }
 
 /* ===========================
    RESET PASSWORD PAGE
    =========================== */
 
-function ResetPasswordPage({ onDone }) {
+function ResetPasswordPage({ onDone, allowNonAdmin }) {
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
   const [error, setError] = useState("");
   const [info, setInfo] = useState("");
+  const [linkError, setLinkError] = useState("");
   const [userRole, setUserRole] = useState(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     async function checkRole() {
+      const url = new URL(window.location.href);
+      const hashParams = new URLSearchParams(
+        url.hash.startsWith("#") ? url.hash.substring(1) : url.hash
+      );
+      const searchParams = url.searchParams;
+      const errorCode =
+        hashParams.get("error_code") || searchParams.get("error_code");
+      const errorDescription =
+        hashParams.get("error_description") ||
+        searchParams.get("error_description");
+      if (errorCode === "otp_expired" || /expired/i.test(errorDescription || "")) {
+        setLinkError("This invite link has expired. Please request a new invite.");
+        setLoading(false);
+        return;
+      }
+
       const { data: { session } } = await supabase.auth.getSession();
       
       if (session?.user) {
@@ -88,7 +135,10 @@ function ResetPasswordPage({ onDone }) {
       return;
     }
 
-    const { error } = await supabase.auth.updateUser({ password });
+    const { error } = await supabase.auth.updateUser({
+      password,
+      data: { password_set: true },
+    });
 
     if (error) {
       setError(error.message);
@@ -101,14 +151,15 @@ function ResetPasswordPage({ onDone }) {
           if (typeof window !== "undefined") {
             // clear hash so we don't keep thinking it's a recovery URL
             window.location.hash = "";
+            window.history.replaceState({}, "", "/");
           }
         } catch (_) {}
 
         await supabase.auth.signOut();
-        // Close the window/tab after reset
         if (typeof window !== "undefined") {
-          window.close();
+          sessionStorage.removeItem("force_password_change");
         }
+        if (onDone) onDone();
       }, 1200);
     }
   }
@@ -123,8 +174,50 @@ function ResetPasswordPage({ onDone }) {
     );
   }
 
+  if (linkError) {
+    return (
+      <div className="app-root">
+        <div
+          style={{
+            maxWidth: 420,
+            margin: "80px auto",
+            padding: 24,
+            background: "#ffffff",
+            borderRadius: 12,
+            boxShadow: "0 10px 30px rgba(0,0,0,0.08)",
+          }}
+        >
+          <h1 style={{ marginBottom: 8 }}>Link Expired</h1>
+          <p style={{ marginTop: 0, marginBottom: 20, color: "#6b7280" }}>
+            {linkError}
+          </p>
+          <button
+            onClick={() => {
+              supabase.auth.signOut();
+              if (typeof window !== "undefined") {
+                window.close();
+              }
+            }}
+            style={{
+              width: "100%",
+              padding: 10,
+              borderRadius: 999,
+              border: "none",
+              backgroundColor: "#1d4ed8",
+              color: "#ffffff",
+              fontWeight: 600,
+              cursor: "pointer",
+            }}
+          >
+            Close
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   // Non-admin users can't reset password via portal
-  if (userRole !== "admin") {
+  if (!allowNonAdmin && userRole !== "admin") {
     return (
       <div className="app-root">
         <div
@@ -536,8 +629,8 @@ function ActionTaskPage({ activeTab }) {
             marginTop: 20,
             padding: 12,
             borderRadius: 6,
-            backgroundColor: message.startsWith("✓") ? "#dcfce7" : "#fee2e2",
-            color: message.startsWith("✓") ? "#166534" : "#991b1b",
+            backgroundColor: message.startsWith("User created") ? "#dcfce7" : "#fee2e2",
+            color: message.startsWith("User created") ? "#166534" : "#991b1b",
           }}
         >
           {message}
@@ -553,37 +646,54 @@ function ActionTaskPage({ activeTab }) {
 
 function UserManagementPage() {
   const [newUserEmail, setNewUserEmail] = useState("");
-  const [newUserPassword, setNewUserPassword] = useState("");
   const [newUserRole, setNewUserRole] = useState("user");
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState("");
   
   // For viewing current users
-  const [showUsersList, setShowUsersList] = useState(false);
   const [allUsers, setAllUsers] = useState([]);
   const [userRoles, setUserRoles] = useState({});
   const [loadingUsers, setLoadingUsers] = useState(false);
   const [searchText, setSearchText] = useState("");
+  const [deletingUserId, setDeletingUserId] = useState(null);
+
+  function withTimeout(promise, ms, message) {
+    let timeoutId;
+    const timeout = new Promise((_, reject) => {
+      timeoutId = setTimeout(() => {
+        reject(new Error(message || "Request timed out"));
+      }, ms);
+    });
+    return Promise.race([promise, timeout]).finally(() => {
+      clearTimeout(timeoutId);
+    });
+  }
 
   async function loadAllUsers() {
     setLoadingUsers(true);
     try {
       // Get all users
-      const { data: usersData, error: usersError } = await supabase.functions.invoke('list-users');
+      let usersData;
+      let usersError;
+      try {
+        ({ data: usersData, error: usersError } = await withTimeout(
+          supabase.functions.invoke('list-users'),
+          30000,
+          "User list request timed out"
+        ));
+      } catch (err) {
+        ({ data: usersData, error: usersError } = await withTimeout(
+          supabase.functions.invoke('list-users'),
+          30000,
+          "User list request timed out"
+        ));
+      }
       if (usersError) throw usersError;
       if (!usersData.success) throw new Error(usersData.error);
 
-      // Get all user roles
-      const { data: rolesData, error: rolesError } = await supabase
-        .from('user_roles')
-        .select('user_id, role');
-      
-      if (rolesError) throw rolesError;
-
-      // Map user_id to role
       const rolesMap = {};
-      rolesData.forEach(r => {
-        rolesMap[r.user_id] = r.role;
+      (usersData.users || []).forEach((user) => {
+        rolesMap[user.id] = user.role || "user";
       });
 
       setAllUsers(usersData.users || []);
@@ -596,20 +706,39 @@ function UserManagementPage() {
     }
   }
 
-  function toggleUsersList() {
-    if (!showUsersList && allUsers.length === 0) {
-      loadAllUsers();
-    }
-    setShowUsersList(!showUsersList);
-  }
+  useEffect(() => {
+    loadAllUsers();
+  }, []);
 
   const filteredUsers = allUsers.filter(user => 
     user.email.toLowerCase().includes(searchText.toLowerCase())
   );
 
+  async function handleDeleteUser(user) {
+    if (!user?.id) return;
+    if (!window.confirm(`Delete user ${user.email}?`)) return;
+
+    setDeletingUserId(user.id);
+    try {
+      const { data, error } = await supabase.functions.invoke("delete-user", {
+        body: { userId: user.id }
+      });
+      if (error) throw error;
+      if (!data?.success) {
+        throw new Error(data?.error || "Failed to delete user");
+      }
+      await loadAllUsers();
+    } catch (err) {
+      console.error("Delete user error:", err);
+      setMessage(`Error deleting user: ${err.message}`);
+    } finally {
+      setDeletingUserId(null);
+    }
+  }
+
   async function createUser() {
-    if (!newUserEmail.trim() || !newUserPassword.trim()) {
-      setMessage("Email and password are required");
+    if (!newUserEmail.trim()) {
+      setMessage("Email is required");
       return;
     }
 
@@ -618,12 +747,21 @@ function UserManagementPage() {
 
     try {
       // Call Supabase Edge Function to create user with proper permissions
-      const { data, error } = await supabase.functions.invoke('create-user', {
+      const adminRedirectBase =
+        window.location.hostname === "localhost" ||
+        window.location.hostname === "127.0.0.1"
+          ? "http://localhost:5173"
+          : window.location.origin;
+      const redirectTo =
+        newUserRole === "admin"
+          ? `${adminRedirectBase}/reset?from=invite`
+          : "maintenanceapp://reset";
+      const { data, error } = await supabase.functions.invoke("create-user", {
         body: {
           email: newUserEmail,
-          password: newUserPassword,
-          role: newUserRole
-        }
+          role: newUserRole,
+          redirectTo,
+        },
       });
 
       console.log('Create user response:', data, error);
@@ -634,9 +772,10 @@ function UserManagementPage() {
         throw new Error(data.error || 'Failed to create user');
       }
 
-      setMessage(`✓ User created successfully: ${newUserEmail} (${newUserRole})`);
+      setMessage(`User created successfully. An email invite was sent to ${newUserEmail}.`);
+      loadAllUsers();
+      setTimeout(() => setMessage(""), 3000);
       setNewUserEmail("");
-      setNewUserPassword("");
       setNewUserRole("user");
     } catch (err) {
       console.error('Create user error:', err);
@@ -650,7 +789,7 @@ function UserManagementPage() {
     <div style={{ padding: 30, maxWidth: 1400, margin: "0 auto" }}>
       <h2 style={{ marginBottom: 20 }}>User Management</h2>
       <p style={{ color: "#666", marginBottom: 30 }}>
-        Create new user accounts for the mobile app.
+        Create new user accounts for the mobile app. Users receive an email to set their password.
       </p>
 
       <div style={{ display: "flex", gap: 40, alignItems: "flex-start" }}>
@@ -665,25 +804,6 @@ function UserManagementPage() {
               value={newUserEmail}
               onChange={(e) => setNewUserEmail(e.target.value)}
               placeholder="user@company.com"
-              style={{
-                width: "100%",
-                padding: 10,
-                borderRadius: 6,
-                border: "1px solid #ddd",
-                fontSize: 16
-              }}
-            />
-          </div>
-
-          <div style={{ marginBottom: 15 }}>
-            <label style={{ display: "block", marginBottom: 5, fontWeight: 600 }}>
-              Password
-            </label>
-            <input
-              type="password"
-              value={newUserPassword}
-              onChange={(e) => setNewUserPassword(e.target.value)}
-              placeholder="Minimum 6 characters"
               style={{
                 width: "100%",
                 padding: 10,
@@ -739,8 +859,8 @@ function UserManagementPage() {
                 marginTop: 20,
                 padding: 12,
                 borderRadius: 6,
-                backgroundColor: message.startsWith("✓") ? "#dcfce7" : "#fee2e2",
-                color: message.startsWith("✓") ? "#166534" : "#991b1b",
+                backgroundColor: message.startsWith("User created") ? "#dcfce7" : "#fee2e2",
+                color: message.startsWith("User created") ? "#166534" : "#991b1b",
               }}
             >
               {message}
@@ -750,8 +870,7 @@ function UserManagementPage() {
 
         {/* Right Column - Current Users and Roles */}
         <div style={{ flex: 1 }}>
-          <button
-            onClick={toggleUsersList}
+          <div
             style={{
               width: "100%",
               padding: "12px 16px",
@@ -760,64 +879,64 @@ function UserManagementPage() {
               borderRadius: 6,
               fontSize: 16,
               fontWeight: 600,
-              cursor: "pointer",
               display: "flex",
               justifyContent: "space-between",
               alignItems: "center",
             }}
           >
             <span>Current Users and Roles ({allUsers.length})</span>
-            <span>{showUsersList ? "▼" : "▶"}</span>
-          </button>
+          </div>
 
-          {showUsersList && (
-            <div style={{ marginTop: 20 }}>
-              {loadingUsers ? (
-                <p style={{ textAlign: "center", color: "#666" }}>Loading users...</p>
-              ) : (
-                <>
-                  {/* Search Box */}
-                  <div style={{ marginBottom: 15 }}>
-                    <input
-                      type="text"
-                      placeholder="Search users by email..."
-                      value={searchText}
-                      onChange={(e) => setSearchText(e.target.value)}
-                      style={{
-                        width: "100%",
-                        padding: 10,
-                        borderRadius: 6,
-                        border: "1px solid #ddd",
-                        fontSize: 14
-                      }}
-                    />
-                  </div>
-
-                  {/* Users List */}
-                  {filteredUsers.length === 0 ? (
-                    <p style={{ textAlign: "center", color: "#666" }}>No users found</p>
-                  ) : (
-                    <div style={{ 
-                      border: "1px solid #e5e7eb", 
+          <div style={{ marginTop: 20 }}>
+            {loadingUsers ? (
+              <p style={{ textAlign: "center", color: "#666" }}>Loading users...</p>
+            ) : (
+              <>
+                {/* Search Box */}
+                <div style={{ marginBottom: 15 }}>
+                  <input
+                    type="text"
+                    placeholder="Search users by email..."
+                    value={searchText}
+                    onChange={(e) => setSearchText(e.target.value)}
+                    style={{
+                      width: "100%",
+                      padding: 10,
                       borderRadius: 6,
-                      maxHeight: 500,
-                      overflowY: "auto"
-                    }}>
-                      {filteredUsers.map((user, index) => {
-                        const role = userRoles[user.id] || "user";
-                        return (
-                          <div
-                            key={user.id}
-                            style={{
-                              padding: "12px 16px",
-                              borderBottom: index < filteredUsers.length - 1 ? "1px solid #e5e7eb" : "none",
-                              display: "flex",
-                              justifyContent: "space-between",
-                              alignItems: "center",
-                              backgroundColor: index % 2 === 0 ? "#fff" : "#f9fafb"
-                            }}
-                          >
-                            <span style={{ fontSize: 14, color: "#111827" }}>{user.email}</span>
+                      border: "1px solid #ddd",
+                      fontSize: 14
+                    }}
+                  />
+                </div>
+
+                {/* Users List */}
+                {filteredUsers.length === 0 ? (
+                  <p style={{ textAlign: "center", color: "#666" }}>No users found</p>
+                ) : (
+                  <div style={{ 
+                    border: "1px solid #e5e7eb", 
+                    borderRadius: 6,
+                    maxHeight: 500,
+                    overflowY: "auto"
+                  }}>
+                    {filteredUsers.map((user, index) => {
+                      const role = userRoles[user.id] || "user";
+                      const canDelete = role !== "admin" && role !== "manager";
+                      const isDeleting = deletingUserId === user.id;
+                      return (
+                        <div
+                          key={user.id}
+                          style={{
+                            padding: "12px 16px",
+                            borderBottom: index < filteredUsers.length - 1 ? "1px solid #e5e7eb" : "none",
+                            display: "flex",
+                            justifyContent: "space-between",
+                            alignItems: "center",
+                            backgroundColor: index % 2 === 0 ? "#fff" : "#f9fafb"
+                          }}
+                        >
+                          <span style={{ fontSize: 14, color: "#111827" }}>{user.email}</span>
+                          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
                             <span
                               style={{
                                 fontSize: 12,
@@ -830,33 +949,37 @@ function UserManagementPage() {
                             >
                               {role.toUpperCase()}
                             </span>
+                            {canDelete && (
+                              <button
+                                onClick={() => handleDeleteUser(user)}
+                                disabled={isDeleting}
+                                aria-label={`Delete ${user.email}`}
+                                title="Delete user"
+                                style={{
+                                  border: "none",
+                                  background: "transparent",
+                                  color: "#b91c1c",
+                                  fontWeight: 700,
+                                  cursor: isDeleting ? "not-allowed" : "pointer",
+                                  padding: 0,
+                                  width: 18,
+                                  height: 18,
+                                  lineHeight: "18px",
+                                  textAlign: "center"
+                                }}
+                              >
+                                {isDeleting ? "…" : "x"}
+                              </button>
+                            )}
                           </div>
-                        );
-                      })}
-                    </div>
-                  )}
-
-                  {/* Refresh Button */}
-                  <button
-                    onClick={loadAllUsers}
-                    disabled={loadingUsers}
-                    style={{
-                      marginTop: 15,
-                      padding: "8px 16px",
-                      backgroundColor: "#fff",
-                      border: "1px solid #d1d5db",
-                      borderRadius: 6,
-                      fontSize: 14,
-                      cursor: loadingUsers ? "not-allowed" : "pointer",
-                      opacity: loadingUsers ? 0.6 : 1,
-                    }}
-                  >
-                    {loadingUsers ? "Refreshing..." : "🔄 Refresh List"}
-                  </button>
-                </>
-              )}
-            </div>
-          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </>
+            )}
+          </div>
         </div>
       </div>
     </div>
@@ -1130,8 +1253,7 @@ function DefectsPage({ activeTab }) {
         console.error("Email send error:", error);
         alert(`Failed to send email:\n\n${error.message || JSON.stringify(error)}\n\nCheck browser console for details.`);
       } else {
-        alert(`Report PDF emailed successfully to ${recipientEmail}`);
-      }
+        alert(`Report PDF emailed successfully to ${recipientEmail}`);      }
     } catch (err) {
       console.error("Email error:", err);
       alert(`Error: ${err.message}\n\nCheck browser console for details.`);
@@ -1246,6 +1368,18 @@ function DefectsPage({ activeTab }) {
     }
   }
 
+  function withTimeout(promise, ms, message) {
+    let timeoutId;
+    const timeout = new Promise((_, reject) => {
+      timeoutId = setTimeout(() => {
+        reject(new Error(message || "Operation timed out"));
+      }, ms);
+    });
+    return Promise.race([promise, timeout]).finally(() => {
+      clearTimeout(timeoutId);
+    });
+  }
+
   function handleRowClick(defect) {
     const id = defect.id;
     const isOpen = expandedIds.includes(id);
@@ -1298,12 +1432,117 @@ function DefectsPage({ activeTab }) {
     updateEditField(defectId, "newDefectFiles", filesArray);
   }
 
+  async function handleDeleteDefectPhoto(defectId, photoUrl) {
+    if (!window.confirm("Delete this photo?")) return;
+    setEditState((prev) => ({
+      ...prev,
+      [defectId]: {
+        ...prev[defectId],
+        saving: true,
+        error: "",
+      },
+    }));
+    try {
+      const defect = defects.find((d) => d.id === defectId);
+      const updatedPhotos = (defect.photo_urls || []).filter(
+        (url) => url !== photoUrl
+      );
+      await supabase
+        .from("defects")
+        .update({ photo_urls: updatedPhotos })
+        .eq("id", defectId);
+      const photoPath = photoUrl.split("/defect-photos/")[1]?.split("?")[0];
+      if (photoPath) {
+        await supabase.storage.from("defect-photos").remove([photoPath]);
+      }
+      const { data: auth } = await supabase.auth.getUser();
+      const performer = auth?.user?.email ?? "Admin Portal";
+      await supabase.from("defect_activity").insert({
+        defect_id: defectId,
+        message: "Defect photo deleted via Admin Portal",
+        performed_by: performer,
+      });
+      await loadDefects();
+      setEditState((prev) => ({
+        ...prev,
+        [defectId]: {
+          ...prev[defectId],
+          saving: false,
+          error: "",
+        },
+      }));
+    } catch (err) {
+      setEditState((prev) => ({
+        ...prev,
+        [defectId]: {
+          ...prev[defectId],
+          saving: false,
+          error: "Failed to delete photo.",
+        },
+      }));
+      console.error("Delete defect photo error:", err);
+    }
+  }
+
+  async function handleDeleteRepairPhoto(defectId, photoUrl) {
+    if (!window.confirm("Delete this photo?")) return;
+    setEditState((prev) => ({
+      ...prev,
+      [defectId]: {
+        ...prev[defectId],
+        saving: true,
+        error: "",
+      },
+    }));
+    try {
+      const defect = defects.find((d) => d.id === defectId);
+      const updatedPhotos = (defect.repair_photos || []).filter(
+        (url) => url !== photoUrl
+      );
+      await supabase
+        .from("defects")
+        .update({ repair_photos: updatedPhotos })
+        .eq("id", defectId);
+      const photoPath = photoUrl.split("/repair-photos/")[1]?.split("?")[0];
+      if (photoPath) {
+        await supabase.storage.from("repair-photos").remove([photoPath]);
+      }
+      const { data: auth } = await supabase.auth.getUser();
+      const performer = auth?.user?.email ?? "Admin Portal";
+      await supabase.from("defect_activity").insert({
+        defect_id: defectId,
+        message: "Repair photo deleted via Admin Portal",
+        performed_by: performer,
+      });
+      await loadDefects();
+      setEditState((prev) => ({
+        ...prev,
+        [defectId]: {
+          ...prev[defectId],
+          saving: false,
+          error: "",
+        },
+      }));
+    } catch (err) {
+      setEditState((prev) => ({
+        ...prev,
+        [defectId]: {
+          ...prev[defectId],
+          saving: false,
+          error: "Failed to delete photo.",
+        },
+      }));
+      console.error("Delete repair photo error:", err);
+    }
+  }
+
   async function handleUpdateDefect(defect) {
     const id = defect.id;
     const state = editState[id];
     if (!state) return;
 
     try {
+      const timeoutMs = 60000;
       setEditState((prev) => ({
         ...prev,
         [id]: { ...prev[id], saving: true, error: "" },
@@ -1316,20 +1555,26 @@ function DefectsPage({ activeTab }) {
           const file = state.newDefectFiles[i];
           const filePath = `${id}_defect_admin_${Date.now()}_${i}`;
 
-          const { error: uploadError } = await supabase.storage
-            .from("defect-photos")
-            .upload(filePath, file, {
+          const { error: uploadError } = await withTimeout(
+            supabase.storage.from("defect-photos").upload(filePath, file, {
               contentType: file.type || "image/jpeg",
-            });
+            }),
+            timeoutMs,
+            "Defect photo upload timed out."
+          );
 
           if (uploadError) {
             console.error("Defect photo upload error:", uploadError);
             continue;
           }
 
-          const { data: signed, error: urlError } = await supabase.storage
-            .from("defect-photos")
-            .createSignedUrl(filePath, 60 * 60 * 24 * 365);
+          const { data: signed, error: urlError } = await withTimeout(
+            supabase.storage
+              .from("defect-photos")
+              .createSignedUrl(filePath, 60 * 60 * 24 * 365),
+            timeoutMs,
+            "Defect photo URL signing timed out."
+          );
 
           if (!urlError && signed?.signedUrl) {
             newDefectUrls.push(signed.signedUrl);
@@ -1353,20 +1598,26 @@ function DefectsPage({ activeTab }) {
           const file = state.newFiles[i];
           const filePath = `${id}_repair_admin_${Date.now()}_${i}`;
 
-          const { error: uploadError } = await supabase.storage
-            .from("repair-photos")
-            .upload(filePath, file, {
+          const { error: uploadError } = await withTimeout(
+            supabase.storage.from("repair-photos").upload(filePath, file, {
               contentType: file.type || "image/jpeg",
-            });
+            }),
+            timeoutMs,
+            "Repair photo upload timed out."
+          );
 
           if (uploadError) {
             console.error("Repair photo upload error:", uploadError);
             continue;
           }
 
-          const { data: signed, error: urlError } = await supabase.storage
-            .from("repair-photos")
-            .createSignedUrl(filePath, 60 * 60 * 24 * 365);
+          const { data: signed, error: urlError } = await withTimeout(
+            supabase.storage
+              .from("repair-photos")
+              .createSignedUrl(filePath, 60 * 60 * 24 * 365),
+            timeoutMs,
+            "Repair photo URL signing timed out."
+          );
 
           if (!urlError && signed?.signedUrl) {
             newRepairUrls.push(signed.signedUrl);
@@ -1389,34 +1640,87 @@ function DefectsPage({ activeTab }) {
       // Set closed_out timestamp when completing
       const closedOut = newLocked && !defect.closed_out ? new Date().toISOString() : defect.closed_out;
 
-      const { error: updateError } = await supabase
-        .from("defects")
-        .update({
-          status: newStatus,
-          actions_taken: state.actionsTaken,
-          repair_company: state.repairCompany,
-          photo_urls: updatedDefectPhotos,
-          repair_photos: updatedRepairPhotos,
-          locked: newLocked,
-          closed_out: closedOut,
-        })
-        .eq("id", id);
+      const { error: updateError } = await withTimeout(
+        supabase
+          .from("defects")
+          .update({
+            status: newStatus,
+            actions_taken: state.actionsTaken,
+            repair_company: state.repairCompany,
+            photo_urls: updatedDefectPhotos,
+            repair_photos: updatedRepairPhotos,
+            locked: newLocked,
+            closed_out: closedOut,
+          })
+          .eq("id", id),
+        timeoutMs,
+        "Defect update timed out."
+      );
 
       if (updateError) throw updateError;
 
       const { data: auth } = await supabase.auth.getUser();
       const performer = auth?.user?.email ?? "Admin Portal";
+      const updateMessages = [];
+      const previousStatus = defect.status || "Reported";
+      const nextActions = (state.actionsTaken || "").trim();
+      const previousActions = (defect.actions_taken || "").trim();
+      const previousRepairCompany = defect.repair_company || "";
+      const nextRepairCompany = state.repairCompany || "";
 
-      const { error: logError } = await supabase.from("defect_activity").insert({
-        defect_id: id,
-        message: `Status saved as "${newStatus}" via Admin Portal`,
-        performed_by: performer,
-      });
+      if (newStatus !== previousStatus) {
+        updateMessages.push(
+          `Status changed from "${previousStatus}" to "${newStatus}"`
+        );
+      }
+      if (nextActions !== previousActions) {
+        if (nextActions) {
+          updateMessages.push(`Actions updated: ${nextActions}`);
+        } else {
+          updateMessages.push("Actions cleared");
+        }
+      }
+      if (nextRepairCompany !== previousRepairCompany) {
+        if (nextRepairCompany) {
+          updateMessages.push(`Repair company set to "${nextRepairCompany}"`);
+        } else {
+          updateMessages.push("Repair company cleared");
+        }
+      }
+      if (newDefectUrls.length > 0) {
+        updateMessages.push(
+          `Added ${newDefectUrls.length} defect photo${
+            newDefectUrls.length > 1 ? "s" : ""
+          }`
+        );
+      }
+      if (newRepairUrls.length > 0) {
+        updateMessages.push(
+          `Added ${newRepairUrls.length} repair photo${
+            newRepairUrls.length > 1 ? "s" : ""
+          }`
+        );
+      }
+
+      const message =
+        updateMessages.length > 0
+          ? updateMessages.join("; ")
+          : "Defect saved via Admin Portal";
+
+      const { error: logError } = await withTimeout(
+        supabase.from("defect_activity").insert({
+          defect_id: id,
+          message,
+          performed_by: performer,
+        }),
+        timeoutMs,
+        "Activity log timed out."
+      );
 
       if (logError) console.error("Activity log error:", logError);
 
-      await loadActivity(id);
-      await loadDefects();
+      await withTimeout(loadActivity(id), timeoutMs, "Loading activity timed out.");
+      await withTimeout(loadDefects(), timeoutMs, "Reloading defects timed out.");
 
       setEditState((prev) => ({
         ...prev,
@@ -1659,29 +1963,54 @@ function DefectsPage({ activeTab }) {
                                         {defectPhotos.map((url, idx) => {
                                           if (!url) return null;
                                           return (
-                                            <a
-                                              key={idx}
-                                              href={url}
-                                              target="_blank"
-                                              rel="noopener noreferrer"
-                                              style={{ textDecoration: 'none' }}
-                                            >
-                                              <img
-                                                src={url}
-                                                alt={`Defect Photo ${idx + 1}`}
+                                            <div key={idx} style={{ position: 'relative', display: 'inline-block' }}>
+                                              <a
+                                                href={url}
+                                                target="_blank"
+                                                rel="noopener noreferrer"
+                                                style={{ textDecoration: 'none' }}
+                                              >
+                                                <img
+                                                  src={url}
+                                                  alt={`Defect Photo ${idx + 1}`}
+                                                  style={{
+                                                    width: '100px',
+                                                    height: '100px',
+                                                    objectFit: 'cover',
+                                                    border: '1px solid #d1d5db',
+                                                    borderRadius: '4px',
+                                                    cursor: 'pointer',
+                                                    transition: 'transform 0.2s'
+                                                  }}
+                                                  onMouseEnter={(e) => e.target.style.transform = 'scale(1.05)'}
+                                                  onMouseLeave={(e) => e.target.style.transform = 'scale(1)'}
+                                                />
+                                              </a>
+                                              <button
+                                                onClick={() => handleDeleteDefectPhoto(d.id, url)}
                                                 style={{
-                                                  width: '100px',
-                                                  height: '100px',
-                                                  objectFit: 'cover',
-                                                  border: '1px solid #d1d5db',
-                                                  borderRadius: '4px',
+                                                  position: 'absolute',
+                                                  top: 2,
+                                                  right: 2,
+                                                  background: '#fff',
+                                                  border: 'none',
+                                                  color: '#d00',
+                                                  fontWeight: 'bold',
+                                                  borderRadius: '50%',
+                                                  width: 20,
+                                                  height: 20,
                                                   cursor: 'pointer',
-                                                  transition: 'transform 0.2s'
+                                                  display: 'flex',
+                                                  alignItems: 'center',
+                                                  justifyContent: 'center',
+                                                  boxShadow: '0 0 2px rgba(0,0,0,0.2)'
                                                 }}
-                                                onMouseEnter={(e) => e.target.style.transform = 'scale(1.05)'}
-                                                onMouseLeave={(e) => e.target.style.transform = 'scale(1)'}
-                                              />
-                                            </a>
+                                                title="Delete photo"
+                                                aria-label="Delete photo"
+                                              >
+                                                ×
+                                              </button>
+                                            </div>
                                           );
                                         })}
                                       </div>
@@ -1781,6 +2110,7 @@ function DefectsPage({ activeTab }) {
                                   <h3>Actions Taken</h3>
                                   <textarea
                                     rows={3}
+                                    value={edit.actionsTaken || ""}
                                     onChange={(e) =>
                                       updateEditField(
                                         d.id,
@@ -1796,9 +2126,7 @@ function DefectsPage({ activeTab }) {
                                       border: "1px solid #d1d5db",
                                       resize: "vertical",
                                     }}
-                                  >
-                                    {edit.actionsTaken || ""}
-                                  </textarea>
+                                  />
                                 </div>
                               </div>
 
@@ -1839,29 +2167,54 @@ function DefectsPage({ activeTab }) {
                                         {repairPhotos.map((url, idx) => {
                                           if (!url) return null;
                                           return (
-                                            <a
-                                              key={idx}
-                                              href={url}
-                                              target="_blank"
-                                              rel="noopener noreferrer"
-                                              style={{ textDecoration: 'none' }}
-                                            >
-                                              <img
-                                                src={url}
-                                                alt={`Repair Photo ${idx + 1}`}
+                                            <div key={idx} style={{ position: 'relative', display: 'inline-block' }}>
+                                              <a
+                                                href={url}
+                                                target="_blank"
+                                                rel="noopener noreferrer"
+                                                style={{ textDecoration: 'none' }}
+                                              >
+                                                <img
+                                                  src={url}
+                                                  alt={`Repair Photo ${idx + 1}`}
+                                                  style={{
+                                                    width: '100px',
+                                                    height: '100px',
+                                                    objectFit: 'cover',
+                                                    border: '1px solid #d1d5db',
+                                                    borderRadius: '4px',
+                                                    cursor: 'pointer',
+                                                    transition: 'transform 0.2s'
+                                                  }}
+                                                  onMouseEnter={(e) => e.target.style.transform = 'scale(1.05)'}
+                                                  onMouseLeave={(e) => e.target.style.transform = 'scale(1)'}
+                                                />
+                                              </a>
+                                              <button
+                                                onClick={() => handleDeleteRepairPhoto(d.id, url)}
                                                 style={{
-                                                  width: '100px',
-                                                  height: '100px',
-                                                  objectFit: 'cover',
-                                                  border: '1px solid #d1d5db',
-                                                  borderRadius: '4px',
+                                                  position: 'absolute',
+                                                  top: 2,
+                                                  right: 2,
+                                                  background: '#fff',
+                                                  border: 'none',
+                                                  color: '#d00',
+                                                  fontWeight: 'bold',
+                                                  borderRadius: '50%',
+                                                  width: 20,
+                                                  height: 20,
                                                   cursor: 'pointer',
-                                                  transition: 'transform 0.2s'
+                                                  display: 'flex',
+                                                  alignItems: 'center',
+                                                  justifyContent: 'center',
+                                                  boxShadow: '0 0 2px rgba(0,0,0,0.2)'
                                                 }}
-                                                onMouseEnter={(e) => e.target.style.transform = 'scale(1.05)'}
-                                                onMouseLeave={(e) => e.target.style.transform = 'scale(1)'}
-                                              />
-                                            </a>
+                                                title="Delete photo"
+                                                aria-label="Delete photo"
+                                              >
+                                                ×
+                                              </button>
+                                            </div>
                                           );
                                         })}
                                       </div>
@@ -2459,8 +2812,19 @@ export default function App() {
         data: { session },
       } = await supabase.auth.getSession();
       const recovering = isRecoveryUrl();
+      const passwordSetup = isPasswordSetupUrl();
 
-      if (recovering) {
+      if (passwordSetup && typeof window !== "undefined") {
+        sessionStorage.setItem("force_password_change", "true");
+      }
+
+      if (session && needsPasswordSetup(session)) {
+        if (typeof window !== "undefined") {
+          sessionStorage.setItem("force_password_change", "true");
+        }
+        setSession(session);
+        setView("reset");
+      } else if (recovering || passwordSetup) {
         setSession(session);
         setView("reset");
       } else if (session) {
@@ -2475,7 +2839,20 @@ export default function App() {
         async (event, newSession) => {
           console.log("Auth event:", event);
 
-          if (event === "PASSWORD_RECOVERY" || isRecoveryUrl()) {
+          if (
+            event === "PASSWORD_RECOVERY" ||
+            isRecoveryUrl() ||
+            isPasswordSetupUrl()
+          ) {
+            setSession(newSession);
+            setView("reset");
+            return;
+          }
+
+          if (newSession && needsPasswordSetup(newSession)) {
+            if (typeof window !== "undefined") {
+              sessionStorage.setItem("force_password_change", "true");
+            }
             setSession(newSession);
             setView("reset");
             return;
@@ -2521,6 +2898,11 @@ export default function App() {
   if (view === "reset") {
     return (
       <ResetPasswordPage
+        allowNonAdmin={
+          (typeof window !== "undefined" &&
+            sessionStorage.getItem("force_password_change") === "true") ||
+          isPasswordSetupUrl()
+        }
         onDone={() => {
           setView("login");
         }}
@@ -2534,6 +2916,11 @@ export default function App() {
   if (isRecoveryUrl()) {
     return (
       <ResetPasswordPage
+        allowNonAdmin={
+          (typeof window !== "undefined" &&
+            sessionStorage.getItem("force_password_change") === "true") ||
+          isPasswordSetupUrl()
+        }
         onDone={() => {
           setView("login");
         }}
@@ -2543,6 +2930,21 @@ export default function App() {
 
   if (!session || view === "login") {
     return <LoginPage />;
+  }
+
+  if (needsPasswordSetup(session)) {
+    return (
+      <ResetPasswordPage
+        allowNonAdmin={
+          (typeof window !== "undefined" &&
+            sessionStorage.getItem("force_password_change") === "true") ||
+          isPasswordSetupUrl()
+        }
+        onDone={() => {
+          setView("login");
+        }}
+      />
+    );
   }
 
   if (role !== "admin") {
@@ -2685,3 +3087,6 @@ export default function App() {
     </div>
   );
 }
+
+
+
