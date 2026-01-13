@@ -81,6 +81,8 @@ function needsPasswordSetup(currentSession) {
 function ResetPasswordPage({ onDone, allowNonAdmin }) {
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
+  const [showConfirm, setShowConfirm] = useState(false);
   const [error, setError] = useState("");
   const [info, setInfo] = useState("");
   const [linkError, setLinkError] = useState("");
@@ -279,36 +281,76 @@ function ResetPasswordPage({ onDone, allowNonAdmin }) {
             <label style={{ display: "block", marginBottom: 4 }}>
               New password
             </label>
-            <input
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              style={{
-                width: "100%",
-                padding: 8,
-                borderRadius: 6,
-                border: "1px solid #d1d5db",
-              }}
-              required
-            />
+            <div style={{ position: "relative" }}>
+              <input
+                type={showPassword ? "text" : "password"}
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                style={{
+                  width: "100%",
+                  padding: "8px 72px 8px 8px",
+                  borderRadius: 6,
+                  border: "1px solid #d1d5db",
+                }}
+                required
+              />
+              <button
+                type="button"
+                onClick={() => setShowPassword((prev) => !prev)}
+                style={{
+                  position: "absolute",
+                  right: 8,
+                  top: "50%",
+                  transform: "translateY(-50%)",
+                  border: "none",
+                  background: "transparent",
+                  color: "#1d4ed8",
+                  fontSize: 12,
+                  cursor: "pointer",
+                  padding: 0,
+                }}
+              >
+                {showPassword ? "Hide" : "Show"}
+              </button>
+            </div>
           </div>
 
           <div style={{ marginBottom: 12 }}>
             <label style={{ display: "block", marginBottom: 4 }}>
               Confirm password
             </label>
-            <input
-              type="password"
-              value={confirm}
-              onChange={(e) => setConfirm(e.target.value)}
-              style={{
-                width: "100%",
-                padding: 8,
-                borderRadius: 6,
-                border: "1px solid #d1d5db",
-              }}
-              required
-            />
+            <div style={{ position: "relative" }}>
+              <input
+                type={showConfirm ? "text" : "password"}
+                value={confirm}
+                onChange={(e) => setConfirm(e.target.value)}
+                style={{
+                  width: "100%",
+                  padding: "8px 72px 8px 8px",
+                  borderRadius: 6,
+                  border: "1px solid #d1d5db",
+                }}
+                required
+              />
+              <button
+                type="button"
+                onClick={() => setShowConfirm((prev) => !prev)}
+                style={{
+                  position: "absolute",
+                  right: 8,
+                  top: "50%",
+                  transform: "translateY(-50%)",
+                  border: "none",
+                  background: "transparent",
+                  color: "#1d4ed8",
+                  fontSize: 12,
+                  cursor: "pointer",
+                  padding: 0,
+                }}
+              >
+                {showConfirm ? "Hide" : "Show"}
+              </button>
+            </div>
           </div>
 
           {error && (
@@ -656,6 +698,19 @@ function UserManagementPage() {
   const [loadingUsers, setLoadingUsers] = useState(false);
   const [searchText, setSearchText] = useState("");
   const [deletingUserId, setDeletingUserId] = useState(null);
+  const isLocalhost =
+    window.location.hostname === "localhost" ||
+    window.location.hostname === "127.0.0.1";
+  const adminRedirectBase = isLocalhost
+    ? "http://localhost:5173"
+    : window.location.origin;
+  const expoRedirectBase = "exp://192.168.68.60:8082";
+  const previewRedirectTo =
+    newUserRole === "admin"
+      ? `${adminRedirectBase}/reset?from=invite`
+      : isLocalhost
+      ? `${expoRedirectBase}/--/reset`
+      : "maintenanceapp://reset";
 
   function withTimeout(promise, ms, message) {
     let timeoutId;
@@ -747,15 +802,7 @@ function UserManagementPage() {
 
     try {
       // Call Supabase Edge Function to create user with proper permissions
-      const adminRedirectBase =
-        window.location.hostname === "localhost" ||
-        window.location.hostname === "127.0.0.1"
-          ? "http://localhost:5173"
-          : window.location.origin;
-      const redirectTo =
-        newUserRole === "admin"
-          ? `${adminRedirectBase}/reset?from=invite`
-          : "maintenanceapp://reset";
+      const redirectTo = previewRedirectTo;
       const { data, error } = await supabase.functions.invoke("create-user", {
         body: {
           email: newUserEmail,
@@ -832,6 +879,17 @@ function UserManagementPage() {
               <option value="user">User (Mobile App Only)</option>
               <option value="admin">Admin (Full Access)</option>
             </select>
+          </div>
+
+          <div
+            style={{
+              marginBottom: 12,
+              fontSize: 12,
+              color: "#6b7280",
+              wordBreak: "break-all",
+            }}
+          >
+            Invite redirect: {previewRedirectTo}
           </div>
 
           <button
@@ -1039,10 +1097,14 @@ function DefectsPage({ activeTab }) {
     setError("");
     
     try {
-      const { data, error } = await supabase
-        .from("defects")
-        .select("*")
-        .order("created_at", { ascending: false });
+      const { data, error } = await withTimeout(
+        supabase
+          .from("defects")
+          .select("*")
+          .order("created_at", { ascending: false }),
+        20000,
+        "Loading defects timed out."
+      );
 
       if (error) {
         console.error(error);
@@ -1783,22 +1845,6 @@ function DefectsPage({ activeTab }) {
           <span>Total defects loaded: {totalDefects}</span>
           <span>Shown after filters: {shownCount}</span>
         </div>
-        <button
-          onClick={loadDefects}
-          disabled={loading}
-          style={{
-            padding: "8px 16px",
-            borderRadius: 6,
-            border: "none",
-            backgroundColor: "white",
-            color: "#3b82f6",
-            fontWeight: 600,
-            cursor: loading ? "not-allowed" : "pointer",
-            opacity: loading ? 0.6 : 1
-          }}
-        >
-          {loading ? "Refreshing..." : "Refresh"}
-        </button>
       </div>
 
       {/* MAIN */}
@@ -2576,6 +2622,7 @@ function DefectsPage({ activeTab }) {
 function LoginPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [info, setInfo] = useState("");
@@ -2684,18 +2731,38 @@ function LoginPage() {
             <label style={{ display: "block", marginBottom: 4 }}>
               Password
             </label>
-            <input
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              style={{
-                width: "100%",
-                padding: 8,
-                borderRadius: 6,
-                border: "1px solid #d1d5db",
-              }}
-              required
-            />
+            <div style={{ position: "relative" }}>
+              <input
+                type={showPassword ? "text" : "password"}
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                style={{
+                  width: "100%",
+                  padding: "8px 72px 8px 8px",
+                  borderRadius: 6,
+                  border: "1px solid #d1d5db",
+                }}
+                required
+              />
+              <button
+                type="button"
+                onClick={() => setShowPassword((prev) => !prev)}
+                style={{
+                  position: "absolute",
+                  right: 8,
+                  top: "50%",
+                  transform: "translateY(-50%)",
+                  border: "none",
+                  background: "transparent",
+                  color: "#1d4ed8",
+                  fontSize: 12,
+                  cursor: "pointer",
+                  padding: 0,
+                }}
+              >
+                {showPassword ? "Hide" : "Show"}
+              </button>
+            </div>
           </div>
 
           <div
