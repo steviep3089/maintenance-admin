@@ -174,7 +174,7 @@ serve(async (req) => {
     const heading = isAdmin
       ? "You have been invited as an admin for the Sitebatch Maintenance Portal"
       : "You have been invited as a user for the Sitebatch Maintenance App"
-    const actionText = isAdmin ? "Set your password" : "Open the Maintenance App"
+    const actionText = "Set your password"
     const actionLinkUrl = new URL(linkData.properties.action_link)
     if (redirectTo) {
       actionLinkUrl.searchParams.set("redirect_to", redirectTo)

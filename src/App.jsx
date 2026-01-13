@@ -88,6 +88,9 @@ function ResetPasswordPage({ onDone, allowNonAdmin }) {
   const [linkError, setLinkError] = useState("");
   const [userRole, setUserRole] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [showPostReset, setShowPostReset] = useState(false);
+  const buildOrigin =
+    typeof window !== "undefined" ? window.location.origin : "";
 
   useEffect(() => {
     async function checkRole() {
@@ -146,23 +149,19 @@ function ResetPasswordPage({ onDone, allowNonAdmin }) {
       setError(error.message);
     } else {
       setInfo("Password updated successfully. You can now log in.");
-
-      // small delay, then sign out & go to login
-      setTimeout(async () => {
-        try {
-          if (typeof window !== "undefined") {
-            // clear hash so we don't keep thinking it's a recovery URL
-            window.location.hash = "";
-            window.history.replaceState({}, "", "/");
-          }
-        } catch (_) {}
-
-        await supabase.auth.signOut();
+      try {
         if (typeof window !== "undefined") {
-          sessionStorage.removeItem("force_password_change");
+          // clear hash so we don't keep thinking it's a recovery URL
+          window.location.hash = "";
+          window.history.replaceState({}, "", "/");
         }
-        if (onDone) onDone();
-      }, 1200);
+      } catch (_) {}
+
+      await supabase.auth.signOut();
+      if (typeof window !== "undefined") {
+        sessionStorage.removeItem("force_password_change");
+      }
+      setShowPostReset(true);
     }
   }
 
@@ -259,6 +258,73 @@ function ResetPasswordPage({ onDone, allowNonAdmin }) {
     );
   }
 
+  if (showPostReset) {
+    const portalLoginUrl =
+      typeof window !== "undefined" ? window.location.origin : "/";
+    const appLoginUrl = "maintenanceapp://login";
+    return (
+      <div className="app-root">
+        <div
+          style={{
+            maxWidth: 420,
+            margin: "80px auto",
+            padding: 24,
+            background: "#ffffff",
+            borderRadius: 12,
+            boxShadow: "0 10px 30px rgba(0,0,0,0.08)",
+          }}
+        >
+          <h1 style={{ marginBottom: 8 }}>Password Updated</h1>
+          <p style={{ marginTop: 0, marginBottom: 20, color: "#6b7280" }}>
+            Your password is set. You can now sign in to the Maintenance App.
+          </p>
+          <p style={{ marginTop: -8, marginBottom: 16, color: "#9ca3af", fontSize: 12 }}>
+            Build source: {buildOrigin}
+          </p>
+          <a
+            href={appLoginUrl}
+            style={{
+              display: "inline-block",
+              width: "100%",
+              textAlign: "center",
+              padding: 10,
+              borderRadius: 999,
+              border: "none",
+              backgroundColor: "#1d4ed8",
+              color: "#ffffff",
+              fontWeight: 600,
+              textDecoration: "none",
+            }}
+          >
+            Open the Maintenance App
+          </a>
+          <button
+            type="button"
+            onClick={() => {
+              if (onDone) onDone();
+              if (typeof window !== "undefined") {
+                window.location.href = portalLoginUrl;
+              }
+            }}
+            style={{
+              width: "100%",
+              marginTop: 12,
+              padding: 10,
+              borderRadius: 999,
+              border: "1px solid #1d4ed8",
+              backgroundColor: "#ffffff",
+              color: "#1d4ed8",
+              fontWeight: 600,
+              cursor: "pointer",
+            }}
+          >
+            Back to Portal Login
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="app-root">
       <div
@@ -273,7 +339,10 @@ function ResetPasswordPage({ onDone, allowNonAdmin }) {
       >
         <h1 style={{ marginBottom: 8 }}>Reset your password</h1>
         <p style={{ marginTop: 0, marginBottom: 20, color: "#6b7280" }}>
-          Please enter a new password for your admin account.
+          Please enter a new password for your account.
+        </p>
+        <p style={{ marginTop: -8, marginBottom: 16, color: "#9ca3af", fontSize: 12 }}>
+          Build source: {buildOrigin}
         </p>
 
         <form onSubmit={handleReset}>
@@ -705,13 +774,7 @@ function UserManagementPage() {
   const adminRedirectBase = isLocalhost
     ? "http://localhost:5173"
     : window.location.origin;
-  const expoRedirectBase = "exp://192.168.68.60:8082";
-  const previewRedirectTo =
-    newUserRole === "admin"
-      ? `${adminRedirectBase}/reset?from=invite`
-      : isLocalhost
-      ? `${expoRedirectBase}/--/reset`
-      : "maintenanceapp://reset";
+  const inviteRedirectTo = `${adminRedirectBase}/reset?from=invite`;
 
   function withTimeout(promise, ms, message) {
     let timeoutId;
@@ -808,7 +871,7 @@ function UserManagementPage() {
 
     try {
       // Call Supabase Edge Function to create user with proper permissions
-      const redirectTo = previewRedirectTo;
+      const redirectTo = inviteRedirectTo;
       const { data, error } = await withTimeout(
         supabase.functions.invoke("create-user", {
           body: {
@@ -899,7 +962,7 @@ function UserManagementPage() {
               wordBreak: "break-all",
             }}
           >
-            Invite redirect: {previewRedirectTo}
+            Invite redirect: {inviteRedirectTo}
           </div>
 
           <button
