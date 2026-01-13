@@ -733,13 +733,13 @@ function UserManagementPage() {
       try {
         ({ data: usersData, error: usersError } = await withTimeout(
           supabase.functions.invoke('list-users'),
-          30000,
+          20000,
           "User list request timed out"
         ));
       } catch (err) {
         ({ data: usersData, error: usersError } = await withTimeout(
           supabase.functions.invoke('list-users'),
-          30000,
+          20000,
           "User list request timed out"
         ));
       }
@@ -753,6 +753,7 @@ function UserManagementPage() {
 
       setAllUsers(usersData.users || []);
       setUserRoles(rolesMap);
+      setMessage("");
     } catch (err) {
       console.error('Error loading users:', err);
       setMessage(`Error loading users: ${err.message}`);
@@ -775,9 +776,13 @@ function UserManagementPage() {
 
     setDeletingUserId(user.id);
     try {
-      const { data, error } = await supabase.functions.invoke("delete-user", {
-        body: { userId: user.id }
-      });
+      const { data, error } = await withTimeout(
+        supabase.functions.invoke("delete-user", {
+          body: { userId: user.id }
+        }),
+        20000,
+        "Delete user request timed out"
+      );
       if (error) throw error;
       if (!data?.success) {
         throw new Error(data?.error || "Failed to delete user");
@@ -803,13 +808,17 @@ function UserManagementPage() {
     try {
       // Call Supabase Edge Function to create user with proper permissions
       const redirectTo = previewRedirectTo;
-      const { data, error } = await supabase.functions.invoke("create-user", {
-        body: {
-          email: newUserEmail,
-          role: newUserRole,
-          redirectTo,
-        },
-      });
+      const { data, error } = await withTimeout(
+        supabase.functions.invoke("create-user", {
+          body: {
+            email: newUserEmail,
+            role: newUserRole,
+            redirectTo,
+          },
+        }),
+        20000,
+        "Create user request timed out"
+      );
 
       console.log('Create user response:', data, error);
 
@@ -820,7 +829,7 @@ function UserManagementPage() {
       }
 
       setMessage(`User created successfully. An email invite was sent to ${newUserEmail}.`);
-      loadAllUsers();
+      await loadAllUsers();
       setTimeout(() => setMessage(""), 3000);
       setNewUserEmail("");
       setNewUserRole("user");
