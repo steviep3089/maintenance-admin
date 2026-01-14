@@ -784,6 +784,7 @@ function UserManagementPage() {
   const [searchText, setSearchText] = useState("");
   const [deletingUserId, setDeletingUserId] = useState(null);
   const loadingUsersRef = useRef(false);
+  const [usersStale, setUsersStale] = useState(false);
   const isLocalhost =
     window.location.hostname === "localhost" ||
     window.location.hostname === "127.0.0.1";
@@ -828,6 +829,7 @@ function UserManagementPage() {
       setAllUsers(usersData.users || []);
       setUserRoles(rolesMap);
       setUserLoadError("");
+      setUsersStale(false);
     } catch (err) {
       console.error('Error loading users:', err);
       setUserLoadError(`Error loading users: ${err.message}`);
@@ -842,7 +844,7 @@ function UserManagementPage() {
       if (document.hidden) {
         return;
       }
-      loadAllUsers();
+      setUsersStale(true);
     };
 
     if (!document.hidden) {
@@ -1059,6 +1061,36 @@ function UserManagementPage() {
               </p>
             ) : (
               <>
+                {usersStale && !userLoadError && (
+                  <div
+                    style={{
+                      marginBottom: 12,
+                      padding: 10,
+                      borderRadius: 6,
+                      backgroundColor: "#fff7ed",
+                      color: "#9a3412",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "space-between",
+                      gap: 12,
+                    }}
+                  >
+                    <span>List may be out of date. Refresh to sync.</span>
+                    <button
+                      onClick={loadAllUsers}
+                      style={{
+                        border: "none",
+                        backgroundColor: "#9a3412",
+                        color: "#fff",
+                        padding: "6px 10px",
+                        borderRadius: 6,
+                        cursor: "pointer",
+                      }}
+                    >
+                      Refresh
+                    </button>
+                  </div>
+                )}
                 {userLoadError && (
                   <div
                     style={{
@@ -1206,6 +1238,7 @@ function DefectsPage({ activeTab }) {
   const [adminUsers, setAdminUsers] = useState([]);
   const [selectedRecipientEmail, setSelectedRecipientEmail] = useState("");
   const loadingDefectsRef = useRef(false);
+  const [defectsStale, setDefectsStale] = useState(false);
 
   async function loadAdminUsers() {
     try {
@@ -1254,6 +1287,7 @@ function DefectsPage({ activeTab }) {
         setError(error.message);
       } else {
         setDefects(data || []);
+        setDefectsStale(false);
       }
     } catch (err) {
       console.error(err);
@@ -1273,8 +1307,7 @@ function DefectsPage({ activeTab }) {
       if (document.hidden) {
         return;
       }
-      loadDefects();
-      loadAdminUsers();
+      setDefectsStale(true);
     };
 
     if (!document.hidden) {
@@ -2026,6 +2059,40 @@ function DefectsPage({ activeTab }) {
                 }}
               >
                 {loading ? "Loading..." : "Retry loading defects"}
+              </button>
+            </div>
+          )}
+          {!error && defectsStale && !loading && (
+            <div
+              style={{
+                marginBottom: 12,
+                padding: 10,
+                borderRadius: 6,
+                backgroundColor: "#fff7ed",
+                color: "#9a3412",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                gap: 12,
+              }}
+            >
+              <span>Defects list may be out of date. Refresh to sync.</span>
+              <button
+                onClick={() => {
+                  loadDefects();
+                  loadAdminUsers();
+                }}
+                style={{
+                  padding: "8px 12px",
+                  borderRadius: 6,
+                  border: "none",
+                  backgroundColor: "#9a3412",
+                  color: "#ffffff",
+                  fontWeight: 600,
+                  cursor: "pointer",
+                }}
+              >
+                Refresh
               </button>
             </div>
           )}
