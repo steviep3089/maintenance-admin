@@ -24,11 +24,45 @@ const STATUS_COLOURS = {
   Completed: "#22c55e",
 };
 
+const CACHE_TTL_MS = 5 * 60 * 1000;
+const CACHE_KEYS = {
+  users: "maintenance-admin.users.v1",
+  userRoles: "maintenance-admin.userRoles.v1",
+  adminUsers: "maintenance-admin.adminUsers.v1",
+  defects: "maintenance-admin.defects.v1",
+};
+
 function formatDateTime(value) {
   if (!value) return "";
   const d = new Date(value);
   if (Number.isNaN(d.getTime())) return "";
   return d.toLocaleString();
+}
+
+function readCache(key, ttlMs = CACHE_TTL_MS) {
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed?.ts || Date.now() - parsed.ts > ttlMs) {
+      return null;
+    }
+    return parsed.value;
+  } catch (err) {
+    console.warn("Cache read failed:", err);
+    return null;
+  }
+}
+
+function writeCache(key, value) {
+  try {
+    localStorage.setItem(
+      key,
+      JSON.stringify({ ts: Date.now(), value })
+    );
+  } catch (err) {
+    console.warn("Cache write failed:", err);
+  }
 }
 
 async function refreshSessionIfNeeded() {
@@ -814,6 +848,19 @@ function UserManagementPage() {
     loadingUsersRef.current = true;
     setLoadingUsers(true);
     setUserLoadError("");
+    let hadCache = false;
+
+    if (!force) {
+      const cachedUsers = readCache(CACHE_KEYS.users);
+      const cachedRoles = readCache(CACHE_KEYS.userRoles);
+      if (cachedUsers) {
+        setAllUsers(cachedUsers);
+        setUserRoles(cachedRoles || {});
+        setUsersStale(false);
+        setLoadingUsers(false);
+        hadCache = true;
+      }
+    }
 
     const requestId = usersRequestIdRef.current + 1;
     usersRequestIdRef.current = requestId;
@@ -855,12 +902,16 @@ function UserManagementPage() {
       setUserRoles(rolesMap);
       setUserLoadError("");
       setUsersStale(false);
+      writeCache(CACHE_KEYS.users, usersData.users || []);
+      writeCache(CACHE_KEYS.userRoles, rolesMap);
     } catch (err) {
       if (usersRequestIdRef.current !== requestId || didTimeout) {
         return;
       }
       console.error('Error loading users:', err);
-      setUserLoadError(`Error loading users: ${err.message}`);
+      if (!hadCache) {
+        setUserLoadError(`Error loading users: ${err.message}`);
+      }
       setUsersStale(true);
     } finally {
       if (usersRequestIdRef.current !== requestId || didTimeout) {
@@ -1291,6 +1342,13 @@ function DefectsPage({ activeTab }) {
         return;
       }
       loadingAdminUsersRef.current = true;
+      let hadCache = false;
+      const cachedAdmins = readCache(CACHE_KEYS.adminUsers);
+      if (cachedAdmins) {
+        setAdminUsers(cachedAdmins);
+        setAdminUsersStale(false);
+        hadCache = true;
+      }
       const requestId = adminUsersRequestIdRef.current + 1;
       adminUsersRequestIdRef.current = requestId;
       let didTimeout = false;
@@ -1338,10 +1396,13 @@ function DefectsPage({ activeTab }) {
       setAdminUsers(adminEmails);
       setAdminUsersStale(false);
       adminUsersRetryRef.current = 0;
+      writeCache(CACHE_KEYS.adminUsers, adminEmails);
     } catch (err) {
       if (!didTimeout) {
         console.error("Error loading admin users:", err);
-        setAdminUsersStale(true);
+        if (!hadCache) {
+          setAdminUsersStale(true);
+        }
         if (!document.hidden && adminUsersRetryRef.current < 1) {
           adminUsersRetryRef.current += 1;
           setTimeout(() => {
@@ -1366,7 +1427,16 @@ function DefectsPage({ activeTab }) {
     loadingDefectsRef.current = true;
     setLoading(true);
     setError("");
+    let hadCache = false;
 
+    const cachedDefects = readCache(CACHE_KEYS.defects);
+    if (cachedDefects) {
+      setDefects(cachedDefects);
+      setDefectsStale(false);
+      setLoading(false);
+      hadCache = true;
+    }
+    
     const requestId = defectsRequestIdRef.current + 1;
     defectsRequestIdRef.current = requestId;
     let didTimeout = false;
@@ -1402,18 +1472,23 @@ function DefectsPage({ activeTab }) {
       }
       if (error) {
         console.error(error);
-        setError(error.message);
+        if (!hadCache) {
+          setError(error.message);
+        }
         setDefectsStale(true);
       } else {
         setDefects(data || []);
         setDefectsStale(false);
+        writeCache(CACHE_KEYS.defects, data || []);
       }
     } catch (err) {
       console.error(err);
       if (defectsRequestIdRef.current !== requestId || didTimeout) {
         return;
       }
-      setError("Unexpected error while loading defects.");
+      if (!hadCache) {
+        setError("Unexpected error while loading defects.");
+      }
       setDefectsStale(true);
     } finally {
       if (defectsRequestIdRef.current !== requestId || didTimeout) {
