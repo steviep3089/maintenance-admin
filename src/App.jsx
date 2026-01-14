@@ -924,6 +924,10 @@ function UserManagementPage() {
               value={newUserEmail}
               onChange={(e) => setNewUserEmail(e.target.value)}
               placeholder="user@company.com"
+              name="new-user-email"
+              id="new-user-email"
+              autoComplete="email"
+              list="user-email-suggestions"
               style={{
                 width: "100%",
                 padding: 10,
@@ -932,6 +936,11 @@ function UserManagementPage() {
                 fontSize: 16
               }}
             />
+            <datalist id="user-email-suggestions">
+              {allUsers.map((user) => (
+                <option key={user.id} value={user.email} />
+              ))}
+            </datalist>
           </div>
 
           <div style={{ marginBottom: 25 }}>
@@ -1060,6 +1069,10 @@ function UserManagementPage() {
                     placeholder="Search users by email..."
                     value={searchText}
                     onChange={(e) => setSearchText(e.target.value)}
+                    name="user-search-email"
+                    id="user-search-email"
+                    autoComplete="email"
+                    list="user-email-suggestions"
                     style={{
                       width: "100%",
                       padding: 10,
