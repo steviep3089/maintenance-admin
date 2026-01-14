@@ -595,18 +595,23 @@ function ActionTaskPage({ activeTab }) {
     refreshIntervalRef.current = setInterval(tick, 20000);
 
     const handleVisibility = () => {
-      if (!document.hidden) {
-        tick();
+      if (document.hidden) {
+        return;
       }
+      tick();
     };
 
     document.addEventListener("visibilitychange", handleVisibility);
+    window.addEventListener("focus", handleVisibility);
+    window.addEventListener("pageshow", handleVisibility);
     return () => {
       if (refreshIntervalRef.current) {
         clearInterval(refreshIntervalRef.current);
         refreshIntervalRef.current = null;
       }
       document.removeEventListener("visibilitychange", handleVisibility);
+      window.removeEventListener("focus", handleVisibility);
+      window.removeEventListener("pageshow", handleVisibility);
     };
   }, [activeTab]);
 
@@ -1092,6 +1097,9 @@ function UserManagementPage() {
         usersRequestIdRef.current += 1;
         loadingUsersRef.current = false;
         setLoadingUsers(false);
+        if (usersTimeoutRef.current) {
+          clearTimeout(usersTimeoutRef.current);
+        }
         return;
       }
       tick();
@@ -1103,12 +1111,16 @@ function UserManagementPage() {
 
     usersRefreshIntervalRef.current = setInterval(tick, 20000);
     document.addEventListener("visibilitychange", handleVisibility);
+    window.addEventListener("focus", handleVisibility);
+    window.addEventListener("pageshow", handleVisibility);
     return () => {
       if (usersRefreshIntervalRef.current) {
         clearInterval(usersRefreshIntervalRef.current);
         usersRefreshIntervalRef.current = null;
       }
       document.removeEventListener("visibilitychange", handleVisibility);
+      window.removeEventListener("focus", handleVisibility);
+      window.removeEventListener("pageshow", handleVisibility);
     };
   }, []);
 
@@ -1714,6 +1726,12 @@ function DefectsPage({ activeTab }) {
         setLoading(false);
         adminUsersRequestIdRef.current += 1;
         loadingAdminUsersRef.current = false;
+        if (defectsTimeoutRef.current) {
+          clearTimeout(defectsTimeoutRef.current);
+        }
+        if (adminUsersTimeoutRef.current) {
+          clearTimeout(adminUsersTimeoutRef.current);
+        }
         return;
       }
       tick();
@@ -1725,12 +1743,16 @@ function DefectsPage({ activeTab }) {
 
     defectsRefreshIntervalRef.current = setInterval(tick, 20000);
     document.addEventListener("visibilitychange", handleVisibility);
+    window.addEventListener("focus", handleVisibility);
+    window.addEventListener("pageshow", handleVisibility);
     return () => {
       if (defectsRefreshIntervalRef.current) {
         clearInterval(defectsRefreshIntervalRef.current);
         defectsRefreshIntervalRef.current = null;
       }
       document.removeEventListener("visibilitychange", handleVisibility);
+      window.removeEventListener("focus", handleVisibility);
+      window.removeEventListener("pageshow", handleVisibility);
     };
   }, [activeTab]);
 
