@@ -94,13 +94,21 @@ function withTimeout(promise, ms, message) {
 
 async function refreshSessionIfNeeded() {
   try {
-    const { data, error } = await supabase.auth.getSession();
+    const { data, error } = await withTimeout(
+      supabase.auth.getSession(),
+      5000,
+      "Session check timed out"
+    );
     if (error || !data?.session) {
       return;
     }
     const expiresAtMs = (data.session.expires_at || 0) * 1000;
     if (expiresAtMs && expiresAtMs - Date.now() < 60000) {
-      await supabase.auth.refreshSession();
+      await withTimeout(
+        supabase.auth.refreshSession(),
+        5000,
+        "Session refresh timed out"
+      );
     }
   } catch (err) {
     console.warn("Session refresh failed:", err);
