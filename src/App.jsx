@@ -530,6 +530,10 @@ function ActionTaskPage({ activeTab }) {
   const [dueDate, setDueDate] = useState("");
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState("");
+  const [usersStale, setUsersStale] = useState(false);
+  const [loadingUsers, setLoadingUsers] = useState(false);
+  const usersRequestIdRef = useRef(0);
+  const usersTimeoutRef = useRef(null);
 
   useEffect(() => {
     if (activeTab === "tasks") {
@@ -565,9 +569,47 @@ function ActionTaskPage({ activeTab }) {
 
   async function loadUsers() {
     try {
-      // Call edge function to get all users
-      const { data, error } = await supabase.functions.invoke('list-users');
+      setLoadingUsers(true);
+      let hadCache = false;
+      const cachedUsers = readCache(CACHE_KEYS.users);
+      if (cachedUsers) {
+        setUsers(cachedUsers);
+        setFilteredUsers(cachedUsers);
+        setUsersStale(false);
+        hadCache = true;
+      }
 
+      const requestId = usersRequestIdRef.current + 1;
+      usersRequestIdRef.current = requestId;
+      let didTimeout = false;
+
+      if (usersTimeoutRef.current) {
+        clearTimeout(usersTimeoutRef.current);
+      }
+
+      usersTimeoutRef.current = setTimeout(() => {
+        if (usersRequestIdRef.current !== requestId) {
+          return;
+        }
+        didTimeout = true;
+        setUsersStale(true);
+        if (!hadCache) {
+          setMessage("Error loading users: User list request timed out");
+        }
+        setLoadingUsers(false);
+      }, 15000);
+
+      await refreshSessionIfNeeded();
+      // Call edge function to get all users
+      const { data, error } = await withTimeout(
+        supabase.functions.invoke('list-users'),
+        15000,
+        "User list request timed out"
+      );
+
+      if (usersRequestIdRef.current !== requestId || didTimeout) {
+        return;
+      }
       if (error) throw error;
       
       if (!data.success) {
@@ -578,13 +620,25 @@ function ActionTaskPage({ activeTab }) {
 
       setUsers(allUsers);
       setFilteredUsers(allUsers);
+      setUsersStale(false);
+      writeCache(CACHE_KEYS.users, allUsers);
       
       if (allUsers.length === 0) {
         setMessage("No users found in the system.");
       }
     } catch (err) {
-      console.error("Error loading users:", err);
-      setMessage("Error loading users: " + err.message);
+      if (!usersStale) {
+        console.error("Error loading users:", err);
+      }
+      if (!usersStale) {
+        setMessage("Error loading users: " + err.message);
+      }
+      setUsersStale(true);
+    } finally {
+      if (usersTimeoutRef.current) {
+        clearTimeout(usersTimeoutRef.current);
+      }
+      setLoadingUsers(false);
     }
   }
 
@@ -709,6 +763,20 @@ function ActionTaskPage({ activeTab }) {
         <label style={{ display: "block", marginBottom: 5, fontWeight: 600 }}>
           Assign To
         </label>
+        {usersStale && (
+          <div
+            style={{
+              background: "#fff7ed",
+              color: "#9a3412",
+              padding: "6px 8px",
+              borderRadius: 6,
+              marginBottom: 8,
+              fontSize: 13
+            }}
+          >
+            User list may be out of date.
+          </div>
+        )}
         <input
           type="text"
           placeholder="Search users..."
@@ -766,7 +834,7 @@ function ActionTaskPage({ activeTab }) {
 
       <button
         onClick={assignTask}
-        disabled={loading}
+        disabled={loading || loadingUsers}
         style={{
           backgroundColor: "#3b82f6",
           color: "white",
@@ -1363,7 +1431,9 @@ function DefectsPage({ activeTab }) {
       }
       didTimeout = true;
       setAdminUsersStale(true);
-      console.error("Error loading admin users: Loading admin users timed out.");
+      if (!hadCache) {
+        console.error("Error loading admin users: Loading admin users timed out.");
+      }
       loadingAdminUsersRef.current = false;
       if (!document.hidden && adminUsersRetryRef.current < 1) {
         adminUsersRetryRef.current += 1;
@@ -1399,7 +1469,9 @@ function DefectsPage({ activeTab }) {
       writeCache(CACHE_KEYS.adminUsers, adminEmails);
     } catch (err) {
       if (!didTimeout) {
-        console.error("Error loading admin users:", err);
+        if (!hadCache) {
+          console.error("Error loading admin users:", err);
+        }
         if (!hadCache) {
           setAdminUsersStale(true);
         }
