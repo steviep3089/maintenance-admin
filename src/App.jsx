@@ -822,7 +822,21 @@ function UserManagementPage() {
   }
 
   useEffect(() => {
-    loadAllUsers();
+    const handleVisibility = () => {
+      if (document.hidden) {
+        return;
+      }
+      loadAllUsers();
+    };
+
+    if (!document.hidden) {
+      loadAllUsers();
+    }
+
+    document.addEventListener("visibilitychange", handleVisibility);
+    return () => {
+      document.removeEventListener("visibilitychange", handleVisibility);
+    };
   }, []);
 
   const filteredUsers = allUsers.filter(user => 
@@ -1233,10 +1247,27 @@ function DefectsPage({ activeTab }) {
   }
 
   useEffect(() => {
-    if (activeTab === "defects") {
+    if (activeTab !== "defects") {
+      return;
+    }
+
+    const handleVisibility = () => {
+      if (document.hidden) {
+        return;
+      }
+      loadDefects();
+      loadAdminUsers();
+    };
+
+    if (!document.hidden) {
       loadDefects();
       loadAdminUsers();
     }
+
+    document.addEventListener("visibilitychange", handleVisibility);
+    return () => {
+      document.removeEventListener("visibilitychange", handleVisibility);
+    };
   }, [activeTab]);
 
   // Reset selected recipient when modal opens/closes
