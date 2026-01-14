@@ -92,26 +92,54 @@ function withTimeout(promise, ms, message) {
   });
 }
 
+const sessionRefreshState = {
+  inFlight: null,
+  lastCheckedAt: 0,
+};
+
 async function refreshSessionIfNeeded() {
+  let isOwner = false;
   try {
-    const { data, error } = await withTimeout(
-      supabase.auth.getSession(),
-      5000,
-      "Session check timed out"
-    );
-    if (error || !data?.session) {
+    if (document.hidden) {
       return;
     }
-    const expiresAtMs = (data.session.expires_at || 0) * 1000;
-    if (expiresAtMs && expiresAtMs - Date.now() < 60000) {
-      await withTimeout(
-        supabase.auth.refreshSession(),
-        5000,
-        "Session refresh timed out"
-      );
+    if (sessionRefreshState.inFlight) {
+      return sessionRefreshState.inFlight;
     }
+    const now = Date.now();
+    if (now - sessionRefreshState.lastCheckedAt < 10000) {
+      return;
+    }
+
+    isOwner = true;
+    sessionRefreshState.inFlight = (async () => {
+      const { data, error } = await withTimeout(
+        supabase.auth.getSession(),
+        8000,
+        "Session check timed out"
+      );
+      if (error || !data?.session) {
+        return;
+      }
+      const expiresAtMs = (data.session.expires_at || 0) * 1000;
+      if (expiresAtMs && expiresAtMs - Date.now() < 60000) {
+        await withTimeout(
+          supabase.auth.refreshSession(),
+          8000,
+          "Session refresh timed out"
+        );
+      }
+    })();
+
+    return sessionRefreshState.inFlight;
   } catch (err) {
     console.warn("Session refresh failed:", err);
+  } finally {
+    if (isOwner && sessionRefreshState.inFlight) {
+      await sessionRefreshState.inFlight.catch(() => null);
+      sessionRefreshState.inFlight = null;
+      sessionRefreshState.lastCheckedAt = Date.now();
+    }
   }
 }
 
