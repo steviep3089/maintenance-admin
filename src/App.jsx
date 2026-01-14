@@ -784,6 +784,8 @@ function UserManagementPage() {
   const [searchText, setSearchText] = useState("");
   const [deletingUserId, setDeletingUserId] = useState(null);
   const loadingUsersRef = useRef(false);
+  const usersRequestIdRef = useRef(0);
+  const usersTimeoutRef = useRef(null);
   const [usersStale, setUsersStale] = useState(false);
   const isLocalhost =
     window.location.hostname === "localhost" ||
@@ -805,12 +807,32 @@ function UserManagementPage() {
     });
   }
 
-  async function loadAllUsers() {
-    if (loadingUsersRef.current) {
+  async function loadAllUsers({ force = false } = {}) {
+    if (loadingUsersRef.current && !force) {
       return;
     }
     loadingUsersRef.current = true;
     setLoadingUsers(true);
+    setUserLoadError("");
+
+    const requestId = usersRequestIdRef.current + 1;
+    usersRequestIdRef.current = requestId;
+    let didTimeout = false;
+
+    if (usersTimeoutRef.current) {
+      clearTimeout(usersTimeoutRef.current);
+    }
+
+    usersTimeoutRef.current = setTimeout(() => {
+      if (usersRequestIdRef.current !== requestId) {
+        return;
+      }
+      didTimeout = true;
+      setUserLoadError("Error loading users: User list request timed out");
+      setUsersStale(true);
+      setLoadingUsers(false);
+      loadingUsersRef.current = false;
+    }, 15000);
     try {
       await refreshSessionIfNeeded();
       const { data: usersData, error: usersError } = await withTimeout(
@@ -818,6 +840,9 @@ function UserManagementPage() {
         15000,
         "User list request timed out"
       );
+      if (usersRequestIdRef.current !== requestId || didTimeout) {
+        return;
+      }
       if (usersError) throw usersError;
       if (!usersData.success) throw new Error(usersData.error);
 
@@ -831,9 +856,19 @@ function UserManagementPage() {
       setUserLoadError("");
       setUsersStale(false);
     } catch (err) {
+      if (usersRequestIdRef.current !== requestId || didTimeout) {
+        return;
+      }
       console.error('Error loading users:', err);
       setUserLoadError(`Error loading users: ${err.message}`);
+      setUsersStale(true);
     } finally {
+      if (usersRequestIdRef.current !== requestId || didTimeout) {
+        return;
+      }
+      if (usersTimeoutRef.current) {
+        clearTimeout(usersTimeoutRef.current);
+      }
       setLoadingUsers(false);
       loadingUsersRef.current = false;
     }
@@ -842,13 +877,16 @@ function UserManagementPage() {
   useEffect(() => {
     const handleVisibility = () => {
       if (document.hidden) {
+        usersRequestIdRef.current += 1;
+        loadingUsersRef.current = false;
+        setLoadingUsers(false);
         return;
       }
-      setUsersStale(true);
+      loadAllUsers({ force: true });
     };
 
     if (!document.hidden) {
-      loadAllUsers();
+      loadAllUsers({ force: true });
     }
 
     document.addEventListener("visibilitychange", handleVisibility);
@@ -1238,10 +1276,30 @@ function DefectsPage({ activeTab }) {
   const [adminUsers, setAdminUsers] = useState([]);
   const [selectedRecipientEmail, setSelectedRecipientEmail] = useState("");
   const loadingDefectsRef = useRef(false);
+  const defectsRequestIdRef = useRef(0);
+  const defectsTimeoutRef = useRef(null);
+  const adminUsersRequestIdRef = useRef(0);
+  const adminUsersTimeoutRef = useRef(null);
   const [defectsStale, setDefectsStale] = useState(false);
 
   async function loadAdminUsers() {
     try {
+      const requestId = adminUsersRequestIdRef.current + 1;
+      adminUsersRequestIdRef.current = requestId;
+      let didTimeout = false;
+
+      if (adminUsersTimeoutRef.current) {
+        clearTimeout(adminUsersTimeoutRef.current);
+      }
+
+      adminUsersTimeoutRef.current = setTimeout(() => {
+        if (adminUsersRequestIdRef.current !== requestId) {
+          return;
+        }
+        didTimeout = true;
+        console.error("Error loading admin users: Loading admin users timed out.");
+      }, 15000);
+
       await refreshSessionIfNeeded();
       // Get admin user IDs (using service_role via edge function to bypass RLS)
       const { data: rolesData, error: roleError } = await withTimeout(
@@ -1250,6 +1308,9 @@ function DefectsPage({ activeTab }) {
         "Loading admin users timed out."
       );
 
+      if (adminUsersRequestIdRef.current !== requestId || didTimeout) {
+        return;
+      }
       if (roleError) throw roleError;
 
       console.log("Admin users response:", rolesData);
@@ -1260,6 +1321,10 @@ function DefectsPage({ activeTab }) {
       setAdminUsers(adminEmails);
     } catch (err) {
       console.error("Error loading admin users:", err);
+    } finally {
+      if (adminUsersTimeoutRef.current) {
+        clearTimeout(adminUsersTimeoutRef.current);
+      }
     }
   }
 
@@ -1270,6 +1335,25 @@ function DefectsPage({ activeTab }) {
     loadingDefectsRef.current = true;
     setLoading(true);
     setError("");
+
+    const requestId = defectsRequestIdRef.current + 1;
+    defectsRequestIdRef.current = requestId;
+    let didTimeout = false;
+
+    if (defectsTimeoutRef.current) {
+      clearTimeout(defectsTimeoutRef.current);
+    }
+
+    defectsTimeoutRef.current = setTimeout(() => {
+      if (defectsRequestIdRef.current !== requestId) {
+        return;
+      }
+      didTimeout = true;
+      setError("Loading defects timed out.");
+      setDefectsStale(true);
+      setLoading(false);
+      loadingDefectsRef.current = false;
+    }, 15000);
     
     try {
       await refreshSessionIfNeeded();
@@ -1282,17 +1366,31 @@ function DefectsPage({ activeTab }) {
         "Loading defects timed out."
       );
 
+      if (defectsRequestIdRef.current !== requestId || didTimeout) {
+        return;
+      }
       if (error) {
         console.error(error);
         setError(error.message);
+        setDefectsStale(true);
       } else {
         setDefects(data || []);
         setDefectsStale(false);
       }
     } catch (err) {
       console.error(err);
+      if (defectsRequestIdRef.current !== requestId || didTimeout) {
+        return;
+      }
       setError("Unexpected error while loading defects.");
+      setDefectsStale(true);
     } finally {
+      if (defectsRequestIdRef.current !== requestId || didTimeout) {
+        return;
+      }
+      if (defectsTimeoutRef.current) {
+        clearTimeout(defectsTimeoutRef.current);
+      }
       setLoading(false);
       loadingDefectsRef.current = false;
     }
@@ -1305,9 +1403,13 @@ function DefectsPage({ activeTab }) {
 
     const handleVisibility = () => {
       if (document.hidden) {
+        defectsRequestIdRef.current += 1;
+        loadingDefectsRef.current = false;
+        setLoading(false);
         return;
       }
-      setDefectsStale(true);
+      loadDefects();
+      loadAdminUsers();
     };
 
     if (!document.hidden) {
