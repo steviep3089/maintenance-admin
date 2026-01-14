@@ -587,6 +587,12 @@ function ActionTaskPage({ activeTab }) {
       if (document.hidden) {
         return;
       }
+      console.log("ActionTask tick", {
+        hidden: document.hidden,
+        visibility: document.visibilityState,
+        activeTab,
+        ts: new Date().toISOString(),
+      });
       loadDefects();
       loadUsers();
     };
@@ -598,6 +604,12 @@ function ActionTaskPage({ activeTab }) {
       if (document.hidden) {
         return;
       }
+      console.log("ActionTask visibility/focus/pageshow", {
+        hidden: document.hidden,
+        visibility: document.visibilityState,
+        activeTab,
+        ts: new Date().toISOString(),
+      });
       tick();
     };
 
@@ -1089,6 +1101,11 @@ function UserManagementPage() {
       if (document.hidden) {
         return;
       }
+      console.log("UserManagement tick", {
+        hidden: document.hidden,
+        visibility: document.visibilityState,
+        ts: new Date().toISOString(),
+      });
       loadAllUsers();
     };
 
@@ -1100,8 +1117,18 @@ function UserManagementPage() {
         if (usersTimeoutRef.current) {
           clearTimeout(usersTimeoutRef.current);
         }
+        console.log("UserManagement hidden", {
+          hidden: document.hidden,
+          visibility: document.visibilityState,
+          ts: new Date().toISOString(),
+        });
         return;
       }
+      console.log("UserManagement visibility/focus/pageshow", {
+        hidden: document.hidden,
+        visibility: document.visibilityState,
+        ts: new Date().toISOString(),
+      });
       tick();
     };
 
@@ -1523,12 +1550,13 @@ function DefectsPage({ activeTab }) {
   const defectsRefreshIntervalRef = useRef(null);
 
   async function loadAdminUsers() {
+    let didTimeout = false;
+    let hadCache = false;
     try {
       if (loadingAdminUsersRef.current) {
         return;
       }
       loadingAdminUsersRef.current = true;
-      let hadCache = false;
       const cachedAdmins = readCache(CACHE_KEYS.adminUsers);
       const cachedAdminsTs = readCacheTimestamp(CACHE_KEYS.adminUsers);
       if (cachedAdmins) {
@@ -1541,7 +1569,6 @@ function DefectsPage({ activeTab }) {
       }
       const requestId = adminUsersRequestIdRef.current + 1;
       adminUsersRequestIdRef.current = requestId;
-      let didTimeout = false;
 
     if (adminUsersTimeoutRef.current) {
       clearTimeout(adminUsersTimeoutRef.current);
@@ -1715,6 +1742,12 @@ function DefectsPage({ activeTab }) {
       if (document.hidden) {
         return;
       }
+      console.log("Defects tick", {
+        hidden: document.hidden,
+        visibility: document.visibilityState,
+        activeTab,
+        ts: new Date().toISOString(),
+      });
       loadDefects();
       loadAdminUsers();
     };
@@ -1732,8 +1765,20 @@ function DefectsPage({ activeTab }) {
         if (adminUsersTimeoutRef.current) {
           clearTimeout(adminUsersTimeoutRef.current);
         }
+        console.log("Defects hidden", {
+          hidden: document.hidden,
+          visibility: document.visibilityState,
+          activeTab,
+          ts: new Date().toISOString(),
+        });
         return;
       }
+      console.log("Defects visibility/focus/pageshow", {
+        hidden: document.hidden,
+        visibility: document.visibilityState,
+        activeTab,
+        ts: new Date().toISOString(),
+      });
       tick();
     };
 
