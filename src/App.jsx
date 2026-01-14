@@ -65,6 +65,18 @@ function writeCache(key, value) {
   }
 }
 
+function withTimeout(promise, ms, message) {
+  let timeoutId;
+  const timeout = new Promise((_, reject) => {
+    timeoutId = setTimeout(() => {
+      reject(new Error(message || "Request timed out"));
+    }, ms);
+  });
+  return Promise.race([promise, timeout]).finally(() => {
+    clearTimeout(timeoutId);
+  });
+}
+
 async function refreshSessionIfNeeded() {
   try {
     const { data, error } = await supabase.auth.getSession();
@@ -896,18 +908,6 @@ function UserManagementPage() {
     ? "http://localhost:5173"
     : window.location.origin;
   const inviteRedirectTo = `${adminRedirectBase}/reset?from=invite`;
-
-  function withTimeout(promise, ms, message) {
-    let timeoutId;
-    const timeout = new Promise((_, reject) => {
-      timeoutId = setTimeout(() => {
-        reject(new Error(message || "Request timed out"));
-      }, ms);
-    });
-    return Promise.race([promise, timeout]).finally(() => {
-      clearTimeout(timeoutId);
-    });
-  }
 
   async function loadAllUsers({ force = false } = {}) {
     if (loadingUsersRef.current && !force) {
@@ -1902,18 +1902,6 @@ function DefectsPage({ activeTab }) {
     } catch (err) {
       console.error("Activity load error:", err);
     }
-  }
-
-  function withTimeout(promise, ms, message) {
-    let timeoutId;
-    const timeout = new Promise((_, reject) => {
-      timeoutId = setTimeout(() => {
-        reject(new Error(message || "Operation timed out"));
-      }, ms);
-    });
-    return Promise.race([promise, timeout]).finally(() => {
-      clearTimeout(timeoutId);
-    });
   }
 
   function handleRowClick(defect) {
