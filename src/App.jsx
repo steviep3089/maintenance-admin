@@ -104,7 +104,7 @@ async function refreshSessionIfNeeded() {
       return;
     }
     if (sessionRefreshState.inFlight) {
-      return sessionRefreshState.inFlight;
+      return sessionRefreshState.inFlight.catch(() => null);
     }
     const now = Date.now();
     if (now - sessionRefreshState.lastCheckedAt < 10000) {
@@ -131,7 +131,7 @@ async function refreshSessionIfNeeded() {
       }
     })();
 
-    return sessionRefreshState.inFlight;
+    return sessionRefreshState.inFlight.catch(() => null);
   } catch (err) {
     console.warn("Session refresh failed:", err);
   } finally {
@@ -723,7 +723,7 @@ function ActionTaskPage({ activeTab }) {
         setLoadingUsers(false);
       }, 15000);
 
-      await refreshSessionIfNeeded();
+      void refreshSessionIfNeeded();
       // Call edge function to get all users
       const { data, error } = await withTimeout(
         supabase.functions.invoke('list-users'),
@@ -1079,7 +1079,7 @@ function UserManagementPage() {
       loadingUsersRef.current = false;
     }, 15000);
     try {
-      await refreshSessionIfNeeded();
+      void refreshSessionIfNeeded();
       const { data: usersData, error: usersError } = await withTimeout(
         supabase.functions.invoke('list-users'),
         15000,
@@ -1622,7 +1622,7 @@ function DefectsPage({ activeTab }) {
       }
     }, 15000);
 
-      await refreshSessionIfNeeded();
+      void refreshSessionIfNeeded();
       // Get admin user IDs (using service_role via edge function to bypass RLS)
       const { data: rolesData, error: roleError } = await withTimeout(
         supabase.functions.invoke('get-admin-users'),
