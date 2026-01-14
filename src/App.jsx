@@ -544,14 +544,45 @@ function ActionTaskPage({ activeTab }) {
   const [message, setMessage] = useState("");
   const [usersStale, setUsersStale] = useState(false);
   const [loadingUsers, setLoadingUsers] = useState(false);
+  const loadingDefectsRef = useRef(false);
   const usersRequestIdRef = useRef(0);
   const usersTimeoutRef = useRef(null);
+  const refreshIntervalRef = useRef(null);
 
   useEffect(() => {
-    if (activeTab === "tasks") {
+    if (activeTab !== "tasks") {
+      if (refreshIntervalRef.current) {
+        clearInterval(refreshIntervalRef.current);
+        refreshIntervalRef.current = null;
+      }
+      return;
+    }
+
+    const tick = () => {
+      if (document.hidden) {
+        return;
+      }
       loadDefects();
       loadUsers();
-    }
+    };
+
+    tick();
+    refreshIntervalRef.current = setInterval(tick, 20000);
+
+    const handleVisibility = () => {
+      if (!document.hidden) {
+        tick();
+      }
+    };
+
+    document.addEventListener("visibilitychange", handleVisibility);
+    return () => {
+      if (refreshIntervalRef.current) {
+        clearInterval(refreshIntervalRef.current);
+        refreshIntervalRef.current = null;
+      }
+      document.removeEventListener("visibilitychange", handleVisibility);
+    };
   }, [activeTab]);
 
   useEffect(() => {
@@ -565,6 +596,10 @@ function ActionTaskPage({ activeTab }) {
   }, [userSearchText, users]);
 
   async function loadDefects() {
+    if (loadingDefectsRef.current) {
+      return;
+    }
+    loadingDefectsRef.current = true;
     try {
       const { data, error } = await supabase
         .from("defects")
@@ -576,6 +611,8 @@ function ActionTaskPage({ activeTab }) {
     } catch (err) {
       console.error("Error loading defects:", err);
       setMessage("Error loading defects: " + err.message);
+    } finally {
+      loadingDefectsRef.current = false;
     }
   }
 
@@ -901,6 +938,7 @@ function UserManagementPage() {
   const usersRequestIdRef = useRef(0);
   const usersTimeoutRef = useRef(null);
   const [usersStale, setUsersStale] = useState(false);
+  const usersRefreshIntervalRef = useRef(null);
   const isLocalhost =
     window.location.hostname === "localhost" ||
     window.location.hostname === "127.0.0.1";
@@ -994,6 +1032,13 @@ function UserManagementPage() {
   }
 
   useEffect(() => {
+    const tick = () => {
+      if (document.hidden) {
+        return;
+      }
+      loadAllUsers();
+    };
+
     const handleVisibility = () => {
       if (document.hidden) {
         usersRequestIdRef.current += 1;
@@ -1001,15 +1046,20 @@ function UserManagementPage() {
         setLoadingUsers(false);
         return;
       }
-      loadAllUsers({ force: true });
+      tick();
     };
 
     if (!document.hidden) {
       loadAllUsers({ force: true });
     }
 
+    usersRefreshIntervalRef.current = setInterval(tick, 20000);
     document.addEventListener("visibilitychange", handleVisibility);
     return () => {
+      if (usersRefreshIntervalRef.current) {
+        clearInterval(usersRefreshIntervalRef.current);
+        usersRefreshIntervalRef.current = null;
+      }
       document.removeEventListener("visibilitychange", handleVisibility);
     };
   }, []);
@@ -1403,6 +1453,7 @@ function DefectsPage({ activeTab }) {
   const adminUsersRetryRef = useRef(0);
   const [defectsStale, setDefectsStale] = useState(false);
   const [adminUsersStale, setAdminUsersStale] = useState(false);
+  const defectsRefreshIntervalRef = useRef(null);
 
   async function loadAdminUsers() {
     try {
@@ -1576,8 +1627,20 @@ function DefectsPage({ activeTab }) {
 
   useEffect(() => {
     if (activeTab !== "defects") {
+      if (defectsRefreshIntervalRef.current) {
+        clearInterval(defectsRefreshIntervalRef.current);
+        defectsRefreshIntervalRef.current = null;
+      }
       return;
     }
+
+    const tick = () => {
+      if (document.hidden) {
+        return;
+      }
+      loadDefects();
+      loadAdminUsers();
+    };
 
     const handleVisibility = () => {
       if (document.hidden) {
@@ -1588,17 +1651,20 @@ function DefectsPage({ activeTab }) {
         loadingAdminUsersRef.current = false;
         return;
       }
-      loadDefects();
-      loadAdminUsers();
+      tick();
     };
 
     if (!document.hidden) {
-      loadDefects();
-      loadAdminUsers();
+      tick();
     }
 
+    defectsRefreshIntervalRef.current = setInterval(tick, 20000);
     document.addEventListener("visibilitychange", handleVisibility);
     return () => {
+      if (defectsRefreshIntervalRef.current) {
+        clearInterval(defectsRefreshIntervalRef.current);
+        defectsRefreshIntervalRef.current = null;
+      }
       document.removeEventListener("visibilitychange", handleVisibility);
     };
   }, [activeTab]);
