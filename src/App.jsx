@@ -1280,25 +1280,42 @@ function DefectsPage({ activeTab }) {
   const defectsTimeoutRef = useRef(null);
   const adminUsersRequestIdRef = useRef(0);
   const adminUsersTimeoutRef = useRef(null);
+  const loadingAdminUsersRef = useRef(false);
+  const adminUsersRetryRef = useRef(0);
   const [defectsStale, setDefectsStale] = useState(false);
+  const [adminUsersStale, setAdminUsersStale] = useState(false);
 
   async function loadAdminUsers() {
     try {
+      if (loadingAdminUsersRef.current) {
+        return;
+      }
+      loadingAdminUsersRef.current = true;
       const requestId = adminUsersRequestIdRef.current + 1;
       adminUsersRequestIdRef.current = requestId;
       let didTimeout = false;
 
-      if (adminUsersTimeoutRef.current) {
-        clearTimeout(adminUsersTimeoutRef.current);
-      }
+    if (adminUsersTimeoutRef.current) {
+      clearTimeout(adminUsersTimeoutRef.current);
+    }
 
-      adminUsersTimeoutRef.current = setTimeout(() => {
-        if (adminUsersRequestIdRef.current !== requestId) {
-          return;
-        }
-        didTimeout = true;
-        console.error("Error loading admin users: Loading admin users timed out.");
-      }, 15000);
+    adminUsersTimeoutRef.current = setTimeout(() => {
+      if (adminUsersRequestIdRef.current !== requestId) {
+        return;
+      }
+      didTimeout = true;
+      setAdminUsersStale(true);
+      console.error("Error loading admin users: Loading admin users timed out.");
+      loadingAdminUsersRef.current = false;
+      if (!document.hidden && adminUsersRetryRef.current < 1) {
+        adminUsersRetryRef.current += 1;
+        setTimeout(() => {
+          if (!document.hidden) {
+            loadAdminUsers();
+          }
+        }, 1500);
+      }
+    }, 15000);
 
       await refreshSessionIfNeeded();
       // Get admin user IDs (using service_role via edge function to bypass RLS)
@@ -1319,12 +1336,26 @@ function DefectsPage({ activeTab }) {
 
       console.log("Admin emails for dropdown:", adminEmails);
       setAdminUsers(adminEmails);
+      setAdminUsersStale(false);
+      adminUsersRetryRef.current = 0;
     } catch (err) {
-      console.error("Error loading admin users:", err);
+      if (!didTimeout) {
+        console.error("Error loading admin users:", err);
+        setAdminUsersStale(true);
+        if (!document.hidden && adminUsersRetryRef.current < 1) {
+          adminUsersRetryRef.current += 1;
+          setTimeout(() => {
+            if (!document.hidden) {
+              loadAdminUsers();
+            }
+          }, 1500);
+        }
+      }
     } finally {
       if (adminUsersTimeoutRef.current) {
         clearTimeout(adminUsersTimeoutRef.current);
       }
+      loadingAdminUsersRef.current = false;
     }
   }
 
@@ -1406,6 +1437,8 @@ function DefectsPage({ activeTab }) {
         defectsRequestIdRef.current += 1;
         loadingDefectsRef.current = false;
         setLoading(false);
+        adminUsersRequestIdRef.current += 1;
+        loadingAdminUsersRef.current = false;
         return;
       }
       loadDefects();
