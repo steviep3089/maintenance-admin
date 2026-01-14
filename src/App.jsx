@@ -1,5 +1,5 @@
 // src/App.jsx
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { supabase } from "./supabaseClient";
 import "./App.css";
 import html2pdf from 'html2pdf.js';
@@ -768,6 +768,7 @@ function UserManagementPage() {
   const [userLoadError, setUserLoadError] = useState("");
   const [searchText, setSearchText] = useState("");
   const [deletingUserId, setDeletingUserId] = useState(null);
+  const loadingUsersRef = useRef(false);
   const isLocalhost =
     window.location.hostname === "localhost" ||
     window.location.hostname === "127.0.0.1";
@@ -789,24 +790,17 @@ function UserManagementPage() {
   }
 
   async function loadAllUsers() {
+    if (loadingUsersRef.current) {
+      return;
+    }
+    loadingUsersRef.current = true;
     setLoadingUsers(true);
     try {
-      // Get all users
-      let usersData;
-      let usersError;
-      try {
-        ({ data: usersData, error: usersError } = await withTimeout(
-          supabase.functions.invoke('list-users'),
-          20000,
-          "User list request timed out"
-        ));
-      } catch (err) {
-        ({ data: usersData, error: usersError } = await withTimeout(
-          supabase.functions.invoke('list-users'),
-          20000,
-          "User list request timed out"
-        ));
-      }
+      const { data: usersData, error: usersError } = await withTimeout(
+        supabase.functions.invoke('list-users'),
+        15000,
+        "User list request timed out"
+      );
       if (usersError) throw usersError;
       if (!usersData.success) throw new Error(usersData.error);
 
@@ -823,6 +817,7 @@ function UserManagementPage() {
       setUserLoadError(`Error loading users: ${err.message}`);
     } finally {
       setLoadingUsers(false);
+      loadingUsersRef.current = false;
     }
   }
 
@@ -1029,7 +1024,9 @@ function UserManagementPage() {
 
           <div style={{ marginTop: 20 }}>
             {loadingUsers ? (
-              <p style={{ textAlign: "center", color: "#666" }}>Loading users...</p>
+              <p style={{ textAlign: "center", color: "#666" }}>
+                {allUsers.length ? "Refreshing users..." : "Loading users..."}
+              </p>
             ) : (
               <>
                 {userLoadError && (
@@ -1178,22 +1175,16 @@ function DefectsPage({ activeTab }) {
   const [selectedDefectForReport, setSelectedDefectForReport] = useState(null);
   const [adminUsers, setAdminUsers] = useState([]);
   const [selectedRecipientEmail, setSelectedRecipientEmail] = useState("");
+  const loadingDefectsRef = useRef(false);
 
   async function loadAdminUsers() {
     try {
-      // Get all users from edge function
-      const { data, error } = await supabase.functions.invoke('list-users');
-
-      if (error) throw error;
-      
-      if (!data.success) {
-        throw new Error(data.error || 'Failed to load users');
-      }
-
-      console.log("All users from list-users:", data.users);
-
       // Get admin user IDs (using service_role via edge function to bypass RLS)
-      const { data: rolesData, error: roleError } = await supabase.functions.invoke('get-admin-users');
+      const { data: rolesData, error: roleError } = await withTimeout(
+        supabase.functions.invoke('get-admin-users'),
+        15000,
+        "Loading admin users timed out."
+      );
 
       if (roleError) throw roleError;
 
@@ -1209,6 +1200,10 @@ function DefectsPage({ activeTab }) {
   }
 
   async function loadDefects() {
+    if (loadingDefectsRef.current) {
+      return;
+    }
+    loadingDefectsRef.current = true;
     setLoading(true);
     setError("");
     
@@ -1218,7 +1213,7 @@ function DefectsPage({ activeTab }) {
           .from("defects")
           .select("*")
           .order("created_at", { ascending: false }),
-        20000,
+        15000,
         "Loading defects timed out."
       );
 
@@ -1231,9 +1226,10 @@ function DefectsPage({ activeTab }) {
     } catch (err) {
       console.error(err);
       setError("Unexpected error while loading defects.");
+    } finally {
+      setLoading(false);
+      loadingDefectsRef.current = false;
     }
-    
-    setLoading(false);
   }
 
   useEffect(() => {
