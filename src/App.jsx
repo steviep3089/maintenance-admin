@@ -31,6 +31,21 @@ function formatDateTime(value) {
   return d.toLocaleString();
 }
 
+async function refreshSessionIfNeeded() {
+  try {
+    const { data, error } = await supabase.auth.getSession();
+    if (error || !data?.session) {
+      return;
+    }
+    const expiresAtMs = (data.session.expires_at || 0) * 1000;
+    if (expiresAtMs && expiresAtMs - Date.now() < 60000) {
+      await supabase.auth.refreshSession();
+    }
+  } catch (err) {
+    console.warn("Session refresh failed:", err);
+  }
+}
+
 function getAuthFlowFromUrl() {
   if (typeof window === "undefined") {
     return { type: null, from: null, pathname: "" };
@@ -796,6 +811,7 @@ function UserManagementPage() {
     loadingUsersRef.current = true;
     setLoadingUsers(true);
     try {
+      await refreshSessionIfNeeded();
       const { data: usersData, error: usersError } = await withTimeout(
         supabase.functions.invoke('list-users'),
         15000,
@@ -1193,6 +1209,7 @@ function DefectsPage({ activeTab }) {
 
   async function loadAdminUsers() {
     try {
+      await refreshSessionIfNeeded();
       // Get admin user IDs (using service_role via edge function to bypass RLS)
       const { data: rolesData, error: roleError } = await withTimeout(
         supabase.functions.invoke('get-admin-users'),
@@ -1222,6 +1239,7 @@ function DefectsPage({ activeTab }) {
     setError("");
     
     try {
+      await refreshSessionIfNeeded();
       const { data, error } = await withTimeout(
         supabase
           .from("defects")
