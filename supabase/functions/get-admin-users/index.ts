@@ -28,19 +28,34 @@ serve(async (req) => {
 
     console.log('Admin roles found:', adminRoles?.length)
 
-    // Get all users
-    const { data: { users }, error: usersError } = await supabase.auth.admin.listUsers()
+    const adminUserIds = adminRoles.map(r => r.user_id).filter(Boolean)
+    if (!adminUserIds.length) {
+      return new Response(
+        JSON.stringify({ success: true, adminEmails: [] }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      )
+    }
 
-    if (usersError) throw usersError
+    // Fetch only admin users instead of listing all users
+    const adminEmailResults = await Promise.allSettled(
+      adminUserIds.map(async (userId) => {
+        const { data, error } = await supabase.auth.admin.getUserById(userId)
+        if (error) {
+          throw error
+        }
+        return data?.user?.email || null
+      })
+    )
 
-    console.log('Total users found:', users?.length)
-
-    // Filter to admin users only
-    const adminUserIds = adminRoles.map(r => r.user_id)
-    const adminEmails = users
-      .filter(u => adminUserIds.includes(u.id))
-      .map(u => u.email)
+    const adminEmails = adminEmailResults
+      .filter(result => result.status === "fulfilled")
+      .map(result => result.value)
       .filter(Boolean)
+
+    const failedLookups = adminEmailResults.filter(result => result.status === "rejected")
+    if (failedLookups.length) {
+      console.warn("Admin user lookup failures:", failedLookups.length)
+    }
 
     console.log('Admin emails:', adminEmails)
 
