@@ -1711,7 +1711,7 @@ function DefectsPage({ activeTab }) {
     }, 15000);
     
     try {
-      await refreshSessionIfNeeded();
+      void refreshSessionIfNeeded();
       const { data, error } = await withTimeout(
         supabase
           .from("defects")
