@@ -54,6 +54,21 @@ function readCache(key, ttlMs = CACHE_TTL_MS) {
   }
 }
 
+function readCacheTimestamp(key, ttlMs = CACHE_TTL_MS) {
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed?.ts || Date.now() - parsed.ts > ttlMs) {
+      return null;
+    }
+    return parsed.ts;
+  } catch (err) {
+    console.warn("Cache timestamp read failed:", err);
+    return null;
+  }
+}
+
 function writeCache(key, value) {
   try {
     localStorage.setItem(
@@ -544,6 +559,8 @@ function ActionTaskPage({ activeTab }) {
   const [message, setMessage] = useState("");
   const [usersStale, setUsersStale] = useState(false);
   const [loadingUsers, setLoadingUsers] = useState(false);
+  const [lastUsersSync, setLastUsersSync] = useState(null);
+  const [lastDefectsSync, setLastDefectsSync] = useState(null);
   const loadingDefectsRef = useRef(false);
   const usersRequestIdRef = useRef(0);
   const usersTimeoutRef = useRef(null);
@@ -608,6 +625,7 @@ function ActionTaskPage({ activeTab }) {
 
       if (error) throw error;
       setDefects(data || []);
+      setLastDefectsSync(Date.now());
     } catch (err) {
       console.error("Error loading defects:", err);
       setMessage("Error loading defects: " + err.message);
@@ -621,10 +639,14 @@ function ActionTaskPage({ activeTab }) {
       setLoadingUsers(true);
       let hadCache = false;
       const cachedUsers = readCache(CACHE_KEYS.users);
+      const cachedUsersTs = readCacheTimestamp(CACHE_KEYS.users);
       if (cachedUsers) {
         setUsers(cachedUsers);
         setFilteredUsers(cachedUsers);
         setUsersStale(false);
+        if (cachedUsersTs) {
+          setLastUsersSync(cachedUsersTs);
+        }
         hadCache = true;
       }
 
@@ -670,6 +692,7 @@ function ActionTaskPage({ activeTab }) {
       setUsers(allUsers);
       setFilteredUsers(allUsers);
       setUsersStale(false);
+      setLastUsersSync(Date.now());
       writeCache(CACHE_KEYS.users, allUsers);
       
       if (allUsers.length === 0) {
@@ -783,6 +806,17 @@ function ActionTaskPage({ activeTab }) {
       <p style={{ color: "#666", marginBottom: 30 }}>
         Assign a defect to a user and send them an email notification.
       </p>
+      {(lastDefectsSync || lastUsersSync) && (
+        <div style={{ color: "#6b7280", fontSize: 12, marginBottom: 18 }}>
+          {lastDefectsSync && (
+            <span>Defects synced: {formatDateTime(lastDefectsSync)}</span>
+          )}
+          {lastDefectsSync && lastUsersSync && <span> | </span>}
+          {lastUsersSync && (
+            <span>Users synced: {formatDateTime(lastUsersSync)}</span>
+          )}
+        </div>
+      )}
 
       <div style={{ marginBottom: 15 }}>
         <label style={{ display: "block", marginBottom: 5, fontWeight: 600 }}>
@@ -934,6 +968,7 @@ function UserManagementPage() {
   const [userLoadError, setUserLoadError] = useState("");
   const [searchText, setSearchText] = useState("");
   const [deletingUserId, setDeletingUserId] = useState(null);
+  const [lastUsersSync, setLastUsersSync] = useState(null);
   const loadingUsersRef = useRef(false);
   const usersRequestIdRef = useRef(0);
   const usersTimeoutRef = useRef(null);
@@ -959,11 +994,15 @@ function UserManagementPage() {
     if (!force) {
       const cachedUsers = readCache(CACHE_KEYS.users);
       const cachedRoles = readCache(CACHE_KEYS.userRoles);
+      const cachedUsersTs = readCacheTimestamp(CACHE_KEYS.users);
       if (cachedUsers) {
         setAllUsers(cachedUsers);
         setUserRoles(cachedRoles || {});
         setUsersStale(false);
         setLoadingUsers(false);
+        if (cachedUsersTs) {
+          setLastUsersSync(cachedUsersTs);
+        }
         hadCache = true;
       }
     }
@@ -1008,6 +1047,7 @@ function UserManagementPage() {
       setUserRoles(rolesMap);
       setUserLoadError("");
       setUsersStale(false);
+      setLastUsersSync(Date.now());
       writeCache(CACHE_KEYS.users, usersData.users || []);
       writeCache(CACHE_KEYS.userRoles, rolesMap);
     } catch (err) {
@@ -1259,6 +1299,11 @@ function UserManagementPage() {
             }}
           >
             <span>Current Users and Roles ({allUsers.length})</span>
+            {lastUsersSync && (
+              <span style={{ fontSize: 12, color: "#6b7280", fontWeight: 500 }}>
+                Last synced: {formatDateTime(lastUsersSync)}
+              </span>
+            )}
           </div>
 
           <div style={{ marginTop: 20 }}>
@@ -1453,6 +1498,8 @@ function DefectsPage({ activeTab }) {
   const adminUsersRetryRef = useRef(0);
   const [defectsStale, setDefectsStale] = useState(false);
   const [adminUsersStale, setAdminUsersStale] = useState(false);
+  const [lastDefectsSync, setLastDefectsSync] = useState(null);
+  const [lastAdminUsersSync, setLastAdminUsersSync] = useState(null);
   const defectsRefreshIntervalRef = useRef(null);
 
   async function loadAdminUsers() {
@@ -1463,9 +1510,13 @@ function DefectsPage({ activeTab }) {
       loadingAdminUsersRef.current = true;
       let hadCache = false;
       const cachedAdmins = readCache(CACHE_KEYS.adminUsers);
+      const cachedAdminsTs = readCacheTimestamp(CACHE_KEYS.adminUsers);
       if (cachedAdmins) {
         setAdminUsers(cachedAdmins);
         setAdminUsersStale(false);
+        if (cachedAdminsTs) {
+          setLastAdminUsersSync(cachedAdminsTs);
+        }
         hadCache = true;
       }
       const requestId = adminUsersRequestIdRef.current + 1;
@@ -1517,6 +1568,7 @@ function DefectsPage({ activeTab }) {
       setAdminUsers(adminEmails);
       setAdminUsersStale(false);
       adminUsersRetryRef.current = 0;
+      setLastAdminUsersSync(Date.now());
       writeCache(CACHE_KEYS.adminUsers, adminEmails);
     } catch (err) {
       if (!didTimeout) {
@@ -1553,10 +1605,14 @@ function DefectsPage({ activeTab }) {
     let hadCache = false;
 
     const cachedDefects = readCache(CACHE_KEYS.defects);
+    const cachedDefectsTs = readCacheTimestamp(CACHE_KEYS.defects);
     if (cachedDefects) {
       setDefects(cachedDefects);
       setDefectsStale(false);
       setLoading(false);
+      if (cachedDefectsTs) {
+        setLastDefectsSync(cachedDefectsTs);
+      }
       hadCache = true;
     }
     
@@ -1602,6 +1658,7 @@ function DefectsPage({ activeTab }) {
       } else {
         setDefects(data || []);
         setDefectsStale(false);
+        setLastDefectsSync(Date.now());
         writeCache(CACHE_KEYS.defects, data || []);
       }
     } catch (err) {
@@ -2373,6 +2430,16 @@ function DefectsPage({ activeTab }) {
           <span>Total defects loaded: {totalDefects}</span>
           <span>Shown after filters: {shownCount}</span>
         </div>
+        {(lastDefectsSync || lastAdminUsersSync) && (
+          <div style={{ fontSize: 12, opacity: 0.9, textAlign: "right" }}>
+            {lastDefectsSync && (
+              <div>Defects synced: {formatDateTime(lastDefectsSync)}</div>
+            )}
+            {lastAdminUsersSync && (
+              <div>Admins synced: {formatDateTime(lastAdminUsersSync)}</div>
+            )}
+          </div>
+        )}
       </div>
 
       {/* MAIN */}
