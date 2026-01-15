@@ -80,69 +80,6 @@ function writeCache(key, value) {
   }
 }
 
-function withTimeout(promise, ms, message) {
-  let timeoutId;
-  const timeout = new Promise((_, reject) => {
-    timeoutId = setTimeout(() => {
-      reject(new Error(message || "Request timed out"));
-    }, ms);
-  });
-  return Promise.race([promise, timeout]).finally(() => {
-    clearTimeout(timeoutId);
-  });
-}
-
-const sessionRefreshState = {
-  inFlight: null,
-  lastCheckedAt: 0,
-};
-
-async function refreshSessionIfNeeded() {
-  let isOwner = false;
-  try {
-    if (document.hidden) {
-      return;
-    }
-    if (sessionRefreshState.inFlight) {
-      return sessionRefreshState.inFlight.catch(() => null);
-    }
-    const now = Date.now();
-    if (now - sessionRefreshState.lastCheckedAt < 10000) {
-      return;
-    }
-
-    isOwner = true;
-    sessionRefreshState.inFlight = (async () => {
-      const { data, error } = await withTimeout(
-        supabase.auth.getSession(),
-        8000,
-        "Session check timed out"
-      );
-      if (error || !data?.session) {
-        return;
-      }
-      const expiresAtMs = (data.session.expires_at || 0) * 1000;
-      if (expiresAtMs && expiresAtMs - Date.now() < 60000) {
-        await withTimeout(
-          supabase.auth.refreshSession(),
-          8000,
-          "Session refresh timed out"
-        );
-      }
-    })();
-
-    return sessionRefreshState.inFlight.catch(() => null);
-  } catch (err) {
-    console.warn("Session refresh failed:", err);
-  } finally {
-    if (isOwner && sessionRefreshState.inFlight) {
-      await sessionRefreshState.inFlight.catch(() => null);
-      sessionRefreshState.inFlight = null;
-      sessionRefreshState.lastCheckedAt = Date.now();
-    }
-  }
-}
-
 function getAuthFlowFromUrl() {
   if (typeof window === "undefined") {
     return { type: null, from: null, pathname: "" };
@@ -604,24 +541,8 @@ function ActionTaskPage({ activeTab }) {
     if (activeTab !== "tasks") {
       return;
     }
-
-    const refreshIfVisible = () => {
-      if (document.hidden) {
-        return;
-      }
-      loadDefects();
-      loadUsers();
-    };
-
-    refreshIfVisible();
-    document.addEventListener("visibilitychange", refreshIfVisible);
-    window.addEventListener("focus", refreshIfVisible);
-    window.addEventListener("pageshow", refreshIfVisible);
-    return () => {
-      document.removeEventListener("visibilitychange", refreshIfVisible);
-      window.removeEventListener("focus", refreshIfVisible);
-      window.removeEventListener("pageshow", refreshIfVisible);
-    };
+    loadDefects();
+    loadUsers();
   }, [activeTab]);
 
   useEffect(() => {
@@ -692,13 +613,8 @@ function ActionTaskPage({ activeTab }) {
         setLoadingUsers(false);
       }, 15000);
 
-      void refreshSessionIfNeeded();
       // Call edge function to get all users
-      const { data, error } = await withTimeout(
-        supabase.functions.invoke('list-users'),
-        15000,
-        "User list request timed out"
-      );
+      const { data, error } = await supabase.functions.invoke('list-users');
 
       if (usersRequestIdRef.current !== requestId || didTimeout) {
         return;
@@ -1047,12 +963,7 @@ function UserManagementPage() {
       loadingUsersRef.current = false;
     }, 15000);
     try {
-      void refreshSessionIfNeeded();
-      const { data: usersData, error: usersError } = await withTimeout(
-        supabase.functions.invoke('list-users'),
-        15000,
-        "User list request timed out"
-      );
+      const { data: usersData, error: usersError } = await supabase.functions.invoke('list-users');
       if (usersRequestIdRef.current !== requestId || didTimeout) {
         return;
       }
@@ -1093,28 +1004,7 @@ function UserManagementPage() {
   }
 
   useEffect(() => {
-    const handleVisibility = () => {
-      if (document.hidden) {
-        usersRequestIdRef.current += 1;
-        loadingUsersRef.current = false;
-        setLoadingUsers(false);
-        if (usersTimeoutRef.current) {
-          clearTimeout(usersTimeoutRef.current);
-        }
-        return;
-      }
-      loadAllUsers({ force: true });
-    };
-
-    handleVisibility();
-    document.addEventListener("visibilitychange", handleVisibility);
-    window.addEventListener("focus", handleVisibility);
-    window.addEventListener("pageshow", handleVisibility);
-    return () => {
-      document.removeEventListener("visibilitychange", handleVisibility);
-      window.removeEventListener("focus", handleVisibility);
-      window.removeEventListener("pageshow", handleVisibility);
-    };
+    loadAllUsers({ force: true });
   }, []);
 
   const filteredUsers = allUsers.filter(user => 
@@ -1127,13 +1017,9 @@ function UserManagementPage() {
 
     setDeletingUserId(user.id);
     try {
-      const { data, error } = await withTimeout(
-        supabase.functions.invoke("delete-user", {
-          body: { userId: user.id }
-        }),
-        20000,
-        "Delete user request timed out"
-      );
+      const { data, error } = await supabase.functions.invoke("delete-user", {
+        body: { userId: user.id }
+      });
       if (error) throw error;
       if (!data?.success) {
         throw new Error(data?.error || "Failed to delete user");
@@ -1159,17 +1045,13 @@ function UserManagementPage() {
     try {
       // Call Supabase Edge Function to create user with proper permissions
       const redirectTo = inviteRedirectTo;
-      const { data, error } = await withTimeout(
-        supabase.functions.invoke("create-user", {
-          body: {
-            email: newUserEmail,
-            role: newUserRole,
-            redirectTo,
-          },
-        }),
-        20000,
-        "Create user request timed out"
-      );
+      const { data, error } = await supabase.functions.invoke("create-user", {
+        body: {
+          email: newUserEmail,
+          role: newUserRole,
+          redirectTo,
+        },
+      });
 
       console.log('Create user response:', data, error);
 
@@ -1559,13 +1441,8 @@ function DefectsPage({ activeTab }) {
       }
     }, 15000);
 
-      void refreshSessionIfNeeded();
       // Get admin user IDs (using service_role via edge function to bypass RLS)
-      const { data: rolesData, error: roleError } = await withTimeout(
-        supabase.functions.invoke('get-admin-users'),
-        15000,
-        "Loading admin users timed out."
-      );
+      const { data: rolesData, error: roleError } = await supabase.functions.invoke('get-admin-users');
 
       if (adminUsersRequestIdRef.current !== requestId || didTimeout) {
         return;
@@ -1648,15 +1525,10 @@ function DefectsPage({ activeTab }) {
     }, 15000);
     
     try {
-      void refreshSessionIfNeeded();
-      const { data, error } = await withTimeout(
-        supabase
-          .from("defects")
-          .select("*")
-          .order("created_at", { ascending: false }),
-        15000,
-        "Loading defects timed out."
-      );
+      const { data, error } = await supabase
+        .from("defects")
+        .select("*")
+        .order("created_at", { ascending: false });
 
       if (defectsRequestIdRef.current !== requestId || didTimeout) {
         return;
@@ -1698,35 +1570,8 @@ function DefectsPage({ activeTab }) {
     if (activeTab !== "defects") {
       return;
     }
-
-    const handleVisibility = () => {
-      if (document.hidden) {
-        defectsRequestIdRef.current += 1;
-        loadingDefectsRef.current = false;
-        setLoading(false);
-        adminUsersRequestIdRef.current += 1;
-        loadingAdminUsersRef.current = false;
-        if (defectsTimeoutRef.current) {
-          clearTimeout(defectsTimeoutRef.current);
-        }
-        if (adminUsersTimeoutRef.current) {
-          clearTimeout(adminUsersTimeoutRef.current);
-        }
-        return;
-      }
-      loadDefects();
-      loadAdminUsers();
-    };
-
-    handleVisibility();
-    document.addEventListener("visibilitychange", handleVisibility);
-    window.addEventListener("focus", handleVisibility);
-    window.addEventListener("pageshow", handleVisibility);
-    return () => {
-      document.removeEventListener("visibilitychange", handleVisibility);
-      window.removeEventListener("focus", handleVisibility);
-      window.removeEventListener("pageshow", handleVisibility);
-    };
+    loadDefects();
+    loadAdminUsers();
   }, [activeTab]);
 
   // Reset selected recipient when modal opens/closes
@@ -2192,7 +2037,6 @@ function DefectsPage({ activeTab }) {
     if (!state) return;
 
     try {
-      const timeoutMs = 60000;
       setEditState((prev) => ({
         ...prev,
         [id]: { ...prev[id], saving: true, error: "" },
@@ -2205,26 +2049,20 @@ function DefectsPage({ activeTab }) {
           const file = state.newDefectFiles[i];
           const filePath = `${id}_defect_admin_${Date.now()}_${i}`;
 
-          const { error: uploadError } = await withTimeout(
-            supabase.storage.from("defect-photos").upload(filePath, file, {
+          const { error: uploadError } = await supabase.storage
+            .from("defect-photos")
+            .upload(filePath, file, {
               contentType: file.type || "image/jpeg",
-            }),
-            timeoutMs,
-            "Defect photo upload timed out."
-          );
+            });
 
           if (uploadError) {
             console.error("Defect photo upload error:", uploadError);
             continue;
           }
 
-          const { data: signed, error: urlError } = await withTimeout(
-            supabase.storage
-              .from("defect-photos")
-              .createSignedUrl(filePath, 60 * 60 * 24 * 365),
-            timeoutMs,
-            "Defect photo URL signing timed out."
-          );
+          const { data: signed, error: urlError } = await supabase.storage
+            .from("defect-photos")
+            .createSignedUrl(filePath, 60 * 60 * 24 * 365);
 
           if (!urlError && signed?.signedUrl) {
             newDefectUrls.push(signed.signedUrl);
@@ -2248,26 +2086,20 @@ function DefectsPage({ activeTab }) {
           const file = state.newFiles[i];
           const filePath = `${id}_repair_admin_${Date.now()}_${i}`;
 
-          const { error: uploadError } = await withTimeout(
-            supabase.storage.from("repair-photos").upload(filePath, file, {
+          const { error: uploadError } = await supabase.storage
+            .from("repair-photos")
+            .upload(filePath, file, {
               contentType: file.type || "image/jpeg",
-            }),
-            timeoutMs,
-            "Repair photo upload timed out."
-          );
+            });
 
           if (uploadError) {
             console.error("Repair photo upload error:", uploadError);
             continue;
           }
 
-          const { data: signed, error: urlError } = await withTimeout(
-            supabase.storage
-              .from("repair-photos")
-              .createSignedUrl(filePath, 60 * 60 * 24 * 365),
-            timeoutMs,
-            "Repair photo URL signing timed out."
-          );
+          const { data: signed, error: urlError } = await supabase.storage
+            .from("repair-photos")
+            .createSignedUrl(filePath, 60 * 60 * 24 * 365);
 
           if (!urlError && signed?.signedUrl) {
             newRepairUrls.push(signed.signedUrl);
@@ -2290,22 +2122,18 @@ function DefectsPage({ activeTab }) {
       // Set closed_out timestamp when completing
       const closedOut = newLocked && !defect.closed_out ? new Date().toISOString() : defect.closed_out;
 
-      const { error: updateError } = await withTimeout(
-        supabase
-          .from("defects")
-          .update({
-            status: newStatus,
-            actions_taken: state.actionsTaken,
-            repair_company: state.repairCompany,
-            photo_urls: updatedDefectPhotos,
-            repair_photos: updatedRepairPhotos,
-            locked: newLocked,
-            closed_out: closedOut,
-          })
-          .eq("id", id),
-        timeoutMs,
-        "Defect update timed out."
-      );
+      const { error: updateError } = await supabase
+        .from("defects")
+        .update({
+          status: newStatus,
+          actions_taken: state.actionsTaken,
+          repair_company: state.repairCompany,
+          photo_urls: updatedDefectPhotos,
+          repair_photos: updatedRepairPhotos,
+          locked: newLocked,
+          closed_out: closedOut,
+        })
+        .eq("id", id);
 
       if (updateError) throw updateError;
 
@@ -2357,20 +2185,16 @@ function DefectsPage({ activeTab }) {
           ? updateMessages.join("; ")
           : "Defect saved via Admin Portal";
 
-      const { error: logError } = await withTimeout(
-        supabase.from("defect_activity").insert({
-          defect_id: id,
-          message,
-          performed_by: performer,
-        }),
-        timeoutMs,
-        "Activity log timed out."
-      );
+      const { error: logError } = await supabase.from("defect_activity").insert({
+        defect_id: id,
+        message,
+        performed_by: performer,
+      });
 
       if (logError) console.error("Activity log error:", logError);
 
-      await withTimeout(loadActivity(id), timeoutMs, "Loading activity timed out.");
-      await withTimeout(loadDefects(), timeoutMs, "Reloading defects timed out.");
+      await loadActivity(id);
+      await loadDefects();
 
       setEditState((prev) => ({
         ...prev,
