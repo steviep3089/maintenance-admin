@@ -541,8 +541,24 @@ function ActionTaskPage({ activeTab }) {
     if (activeTab !== "tasks") {
       return;
     }
-    loadDefects();
-    loadUsers();
+
+    const refreshIfVisible = () => {
+      if (document.hidden) {
+        return;
+      }
+      loadDefects();
+      loadUsers();
+    };
+
+    refreshIfVisible();
+    document.addEventListener("visibilitychange", refreshIfVisible);
+    window.addEventListener("focus", refreshIfVisible);
+    window.addEventListener("pageshow", refreshIfVisible);
+    return () => {
+      document.removeEventListener("visibilitychange", refreshIfVisible);
+      window.removeEventListener("focus", refreshIfVisible);
+      window.removeEventListener("pageshow", refreshIfVisible);
+    };
   }, [activeTab]);
 
   useEffect(() => {
@@ -1004,7 +1020,22 @@ function UserManagementPage() {
   }
 
   useEffect(() => {
-    loadAllUsers({ force: true });
+    const refreshIfVisible = () => {
+      if (document.hidden) {
+        return;
+      }
+      loadAllUsers({ force: true });
+    };
+
+    refreshIfVisible();
+    document.addEventListener("visibilitychange", refreshIfVisible);
+    window.addEventListener("focus", refreshIfVisible);
+    window.addEventListener("pageshow", refreshIfVisible);
+    return () => {
+      document.removeEventListener("visibilitychange", refreshIfVisible);
+      window.removeEventListener("focus", refreshIfVisible);
+      window.removeEventListener("pageshow", refreshIfVisible);
+    };
   }, []);
 
   const filteredUsers = allUsers.filter(user => 
@@ -1570,8 +1601,24 @@ function DefectsPage({ activeTab }) {
     if (activeTab !== "defects") {
       return;
     }
-    loadDefects();
-    loadAdminUsers();
+
+    const refreshIfVisible = () => {
+      if (document.hidden) {
+        return;
+      }
+      loadDefects();
+      loadAdminUsers();
+    };
+
+    refreshIfVisible();
+    document.addEventListener("visibilitychange", refreshIfVisible);
+    window.addEventListener("focus", refreshIfVisible);
+    window.addEventListener("pageshow", refreshIfVisible);
+    return () => {
+      document.removeEventListener("visibilitychange", refreshIfVisible);
+      window.removeEventListener("focus", refreshIfVisible);
+      window.removeEventListener("pageshow", refreshIfVisible);
+    };
   }, [activeTab]);
 
   // Reset selected recipient when modal opens/closes
