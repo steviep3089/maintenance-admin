@@ -582,6 +582,11 @@ function ActionTaskPage({ activeTab }) {
 
     const refreshIfVisible = () => {
       if (document.hidden) {
+        usersRequestIdRef.current += 1;
+        if (usersTimeoutRef.current) {
+          clearTimeout(usersTimeoutRef.current);
+        }
+        setLoadingUsers(false);
         return;
       }
       void resumeSessionIfNeeded().finally(() => {
@@ -1062,6 +1067,12 @@ function UserManagementPage() {
   useEffect(() => {
     const refreshIfVisible = () => {
       if (document.hidden) {
+        usersRequestIdRef.current += 1;
+        if (usersTimeoutRef.current) {
+          clearTimeout(usersTimeoutRef.current);
+        }
+        setLoadingUsers(false);
+        loadingUsersRef.current = false;
         return;
       }
       void resumeSessionIfNeeded().finally(() => {
@@ -1646,6 +1657,17 @@ function DefectsPage({ activeTab }) {
 
     const refreshIfVisible = () => {
       if (document.hidden) {
+        defectsRequestIdRef.current += 1;
+        loadingDefectsRef.current = false;
+        setLoading(false);
+        adminUsersRequestIdRef.current += 1;
+        loadingAdminUsersRef.current = false;
+        if (defectsTimeoutRef.current) {
+          clearTimeout(defectsTimeoutRef.current);
+        }
+        if (adminUsersTimeoutRef.current) {
+          clearTimeout(adminUsersTimeoutRef.current);
+        }
         return;
       }
       void resumeSessionIfNeeded().finally(() => {
