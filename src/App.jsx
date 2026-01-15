@@ -647,10 +647,9 @@ function ActionTaskPage({ activeTab }) {
 
     const cleanup = addResumeListeners(
       () => {
-        void resumeSessionIfNeeded().finally(() => {
-          loadDefects();
-          loadUsers();
-        });
+        void resumeSessionIfNeeded();
+        loadDefects();
+        loadUsers();
       },
       () => {
         usersRequestIdRef.current += 1;
@@ -1093,9 +1092,8 @@ function UserManagementPage() {
   useEffect(() => {
     const cleanup = addResumeListeners(
       () => {
-        void resumeSessionIfNeeded().finally(() => {
-          loadAllUsers({ force: true });
-        });
+        void resumeSessionIfNeeded();
+        loadAllUsers({ force: true });
       },
       () => {
         usersRequestIdRef.current += 1;
@@ -1628,10 +1626,9 @@ function DefectsPage({ activeTab }) {
 
     const cleanup = addResumeListeners(
       () => {
-        void resumeSessionIfNeeded().finally(() => {
-          loadDefects();
-          loadAdminUsers();
-        });
+        void resumeSessionIfNeeded();
+        loadDefects();
+        loadAdminUsers();
       },
       () => {
         defectsRequestIdRef.current += 1;
@@ -3394,15 +3391,18 @@ function LoginPage() {
 export default function App() {
   const [session, setSession] = useState(null);
   const [role, setRole] = useState(null); // "admin" or "user" or null
+  const [roleLoading, setRoleLoading] = useState(false);
   const [view, setView] = useState("loading"); // "loading" | "login" | "reset" | "app"
   const [activeTab, setActiveTab] = useState("defects");
 
   async function loadRoleForSession(currentSession) {
     if (!currentSession) {
       setRole(null);
+      setRoleLoading(false);
       return;
     }
 
+    setRoleLoading(true);
     const userId = currentSession.user.id;
     const { data, error } = await withAuthRetry(() =>
       supabase
@@ -3415,40 +3415,47 @@ export default function App() {
     if (error) {
       console.error("Error loading role:", error);
       setRole(null);
+      setRoleLoading(false);
       return;
     }
 
     setRole(data?.role ?? "user");
+    setRoleLoading(false);
   }
 
   useEffect(() => {
     let subscription;
 
     async function init() {
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
-      const recovering = isRecoveryUrl();
-      const passwordSetup = isPasswordSetupUrl();
+      try {
+        const {
+          data: { session },
+        } = await supabase.auth.getSession();
+        const recovering = isRecoveryUrl();
+        const passwordSetup = isPasswordSetupUrl();
 
-      if (passwordSetup && typeof window !== "undefined") {
-        sessionStorage.setItem("force_password_change", "true");
-      }
-
-      if (session && needsPasswordSetup(session)) {
-        if (typeof window !== "undefined") {
+        if (passwordSetup && typeof window !== "undefined") {
           sessionStorage.setItem("force_password_change", "true");
         }
-        setSession(session);
-        setView("reset");
-      } else if (recovering || passwordSetup) {
-        setSession(session);
-        setView("reset");
-      } else if (session) {
-        setSession(session);
-        await loadRoleForSession(session);
-        setView("app");
-      } else {
+
+        if (session && needsPasswordSetup(session)) {
+          if (typeof window !== "undefined") {
+            sessionStorage.setItem("force_password_change", "true");
+          }
+          setSession(session);
+          setView("reset");
+        } else if (recovering || passwordSetup) {
+          setSession(session);
+          setView("reset");
+        } else if (session) {
+          setSession(session);
+          setView("app");
+          void loadRoleForSession(session);
+        } else {
+          setView("login");
+        }
+      } catch (err) {
+        console.error("Session init failed:", err);
         setView("login");
       }
 
@@ -3478,17 +3485,19 @@ export default function App() {
           if (event === "SIGNED_OUT") {
             setSession(null);
             setRole(null);
+            setRoleLoading(false);
             setView("login");
             return;
           }
 
           if (newSession) {
             setSession(newSession);
-            await loadRoleForSession(newSession);
             setView("app");
+            void loadRoleForSession(newSession);
           } else {
             setSession(null);
             setRole(null);
+            setRoleLoading(false);
             setView("login");
           }
         }
@@ -3565,6 +3574,15 @@ export default function App() {
   }
 
   if (role !== "admin") {
+    if (roleLoading || (session && role === null)) {
+      return (
+        <div className="app-root">
+          <div style={{ padding: 32 }}>
+            Checking access...
+          </div>
+        </div>
+      );
+    }
     return (
       <div className="app-root">
         <div style={{ padding: 32 }}>
