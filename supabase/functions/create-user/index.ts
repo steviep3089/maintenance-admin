@@ -190,6 +190,7 @@ serve(async (req) => {
             ${actionText}
           </a>
         </p>
+        <p><strong>This link expires after 24 hours.</strong> If it expires, please request a new invite.</p>
         <p>If the button does not work, copy and paste this link into your browser:</p>
         <p>${actionLink}</p>
       </div>
