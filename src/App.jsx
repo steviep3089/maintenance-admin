@@ -656,28 +656,11 @@ function ActionTaskPage({ activeTab }) {
 
       const requestId = usersRequestIdRef.current + 1;
       usersRequestIdRef.current = requestId;
-      let didTimeout = false;
-
-      if (usersTimeoutRef.current) {
-        clearTimeout(usersTimeoutRef.current);
-      }
-
-      usersTimeoutRef.current = setTimeout(() => {
-        if (usersRequestIdRef.current !== requestId) {
-          return;
-        }
-        didTimeout = true;
-        setUsersStale(true);
-        if (!hadCache) {
-          setMessage("Error loading users: User list request timed out");
-        }
-        setLoadingUsers(false);
-      }, 15000);
 
       // Call edge function to get all users
       const { data, error } = await supabase.functions.invoke('list-users');
 
-      if (usersRequestIdRef.current !== requestId || didTimeout) {
+      if (usersRequestIdRef.current !== requestId) {
         return;
       }
       if (error) throw error;
@@ -1007,25 +990,9 @@ function UserManagementPage() {
 
     const requestId = usersRequestIdRef.current + 1;
     usersRequestIdRef.current = requestId;
-    let didTimeout = false;
-
-    if (usersTimeoutRef.current) {
-      clearTimeout(usersTimeoutRef.current);
-    }
-
-    usersTimeoutRef.current = setTimeout(() => {
-      if (usersRequestIdRef.current !== requestId) {
-        return;
-      }
-      didTimeout = true;
-      setUserLoadError("Error loading users: User list request timed out");
-      setUsersStale(true);
-      setLoadingUsers(false);
-      loadingUsersRef.current = false;
-    }, 15000);
     try {
       const { data: usersData, error: usersError } = await supabase.functions.invoke('list-users');
-      if (usersRequestIdRef.current !== requestId || didTimeout) {
+      if (usersRequestIdRef.current !== requestId) {
         return;
       }
       if (usersError) throw usersError;
@@ -1044,7 +1011,7 @@ function UserManagementPage() {
       writeCache(CACHE_KEYS.users, usersData.users || []);
       writeCache(CACHE_KEYS.userRoles, rolesMap);
     } catch (err) {
-      if (usersRequestIdRef.current !== requestId || didTimeout) {
+      if (usersRequestIdRef.current !== requestId) {
         return;
       }
       console.error('Error loading users:', err);
@@ -1053,11 +1020,8 @@ function UserManagementPage() {
       }
       setUsersStale(true);
     } finally {
-      if (usersRequestIdRef.current !== requestId || didTimeout) {
+      if (usersRequestIdRef.current !== requestId) {
         return;
-      }
-      if (usersTimeoutRef.current) {
-        clearTimeout(usersTimeoutRef.current);
       }
       setLoadingUsers(false);
       loadingUsersRef.current = false;
@@ -1481,7 +1445,6 @@ function DefectsPage({ activeTab }) {
   const [lastAdminUsersSync, setLastAdminUsersSync] = useState(null);
 
   async function loadAdminUsers() {
-    let didTimeout = false;
     let hadCache = false;
     try {
       if (loadingAdminUsersRef.current) {
@@ -1501,34 +1464,10 @@ function DefectsPage({ activeTab }) {
       const requestId = adminUsersRequestIdRef.current + 1;
       adminUsersRequestIdRef.current = requestId;
 
-    if (adminUsersTimeoutRef.current) {
-      clearTimeout(adminUsersTimeoutRef.current);
-    }
-
-    adminUsersTimeoutRef.current = setTimeout(() => {
-      if (adminUsersRequestIdRef.current !== requestId) {
-        return;
-      }
-      didTimeout = true;
-      setAdminUsersStale(true);
-      if (!hadCache) {
-        console.error("Error loading admin users: Loading admin users timed out.");
-      }
-      loadingAdminUsersRef.current = false;
-      if (!document.hidden && adminUsersRetryRef.current < 1) {
-        adminUsersRetryRef.current += 1;
-        setTimeout(() => {
-          if (!document.hidden) {
-            loadAdminUsers();
-          }
-        }, 1500);
-      }
-    }, 15000);
-
       // Get admin user IDs (using service_role via edge function to bypass RLS)
       const { data: rolesData, error: roleError } = await supabase.functions.invoke('get-admin-users');
 
-      if (adminUsersRequestIdRef.current !== requestId || didTimeout) {
+      if (adminUsersRequestIdRef.current !== requestId) {
         return;
       }
       if (roleError) throw roleError;
@@ -1544,26 +1483,21 @@ function DefectsPage({ activeTab }) {
       setLastAdminUsersSync(Date.now());
       writeCache(CACHE_KEYS.adminUsers, adminEmails);
     } catch (err) {
-      if (!didTimeout) {
-        if (!hadCache) {
-          console.error("Error loading admin users:", err);
-        }
-        if (!hadCache) {
-          setAdminUsersStale(true);
-        }
-        if (!document.hidden && adminUsersRetryRef.current < 1) {
-          adminUsersRetryRef.current += 1;
-          setTimeout(() => {
-            if (!document.hidden) {
-              loadAdminUsers();
-            }
-          }, 1500);
-        }
+      if (!hadCache) {
+        console.error("Error loading admin users:", err);
+      }
+      if (!hadCache) {
+        setAdminUsersStale(true);
+      }
+      if (!document.hidden && adminUsersRetryRef.current < 1) {
+        adminUsersRetryRef.current += 1;
+        setTimeout(() => {
+          if (!document.hidden) {
+            loadAdminUsers();
+          }
+        }, 1500);
       }
     } finally {
-      if (adminUsersTimeoutRef.current) {
-        clearTimeout(adminUsersTimeoutRef.current);
-      }
       loadingAdminUsersRef.current = false;
     }
   }
@@ -1591,22 +1525,6 @@ function DefectsPage({ activeTab }) {
     
     const requestId = defectsRequestIdRef.current + 1;
     defectsRequestIdRef.current = requestId;
-    let didTimeout = false;
-
-    if (defectsTimeoutRef.current) {
-      clearTimeout(defectsTimeoutRef.current);
-    }
-
-    defectsTimeoutRef.current = setTimeout(() => {
-      if (defectsRequestIdRef.current !== requestId) {
-        return;
-      }
-      didTimeout = true;
-      setError("Loading defects timed out.");
-      setDefectsStale(true);
-      setLoading(false);
-      loadingDefectsRef.current = false;
-    }, 15000);
     
     try {
       const { data, error } = await supabase
@@ -1614,7 +1532,7 @@ function DefectsPage({ activeTab }) {
         .select("*")
         .order("created_at", { ascending: false });
 
-      if (defectsRequestIdRef.current !== requestId || didTimeout) {
+      if (defectsRequestIdRef.current !== requestId) {
         return;
       }
       if (error) {
@@ -1631,7 +1549,7 @@ function DefectsPage({ activeTab }) {
       }
     } catch (err) {
       console.error(err);
-      if (defectsRequestIdRef.current !== requestId || didTimeout) {
+      if (defectsRequestIdRef.current !== requestId) {
         return;
       }
       if (!hadCache) {
@@ -1639,11 +1557,8 @@ function DefectsPage({ activeTab }) {
       }
       setDefectsStale(true);
     } finally {
-      if (defectsRequestIdRef.current !== requestId || didTimeout) {
+      if (defectsRequestIdRef.current !== requestId) {
         return;
-      }
-      if (defectsTimeoutRef.current) {
-        clearTimeout(defectsTimeoutRef.current);
       }
       setLoading(false);
       loadingDefectsRef.current = false;
