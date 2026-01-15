@@ -32,6 +32,29 @@ const CACHE_KEYS = {
   defects: "maintenance-admin.defects.v1",
 };
 
+function addResumeListeners(callback) {
+  let lastRunAt = 0;
+  const run = () => {
+    if (document.hidden) {
+      return;
+    }
+    const now = Date.now();
+    if (now - lastRunAt < 1000) {
+      return;
+    }
+    lastRunAt = now;
+    callback();
+  };
+
+  run();
+  window.addEventListener("focus", run);
+  document.addEventListener("visibilitychange", run);
+  return () => {
+    window.removeEventListener("focus", run);
+    document.removeEventListener("visibilitychange", run);
+  };
+}
+
 const sessionResumeState = {
   inFlight: null,
   lastAttemptAt: 0,
@@ -39,6 +62,9 @@ const sessionResumeState = {
 
 async function resumeSessionIfNeeded() {
   try {
+    if (document.hidden) {
+      return;
+    }
     if (sessionResumeState.inFlight) {
       return sessionResumeState.inFlight.catch(() => null);
     }
@@ -580,30 +606,14 @@ function ActionTaskPage({ activeTab }) {
       return;
     }
 
-    const refreshIfVisible = () => {
-      if (document.hidden) {
-        usersRequestIdRef.current += 1;
-        if (usersTimeoutRef.current) {
-          clearTimeout(usersTimeoutRef.current);
-        }
-        setLoadingUsers(false);
-        return;
-      }
+    const cleanup = addResumeListeners(() => {
       void resumeSessionIfNeeded().finally(() => {
         loadDefects();
         loadUsers();
       });
-    };
+    });
 
-    refreshIfVisible();
-    document.addEventListener("visibilitychange", refreshIfVisible);
-    window.addEventListener("focus", refreshIfVisible);
-    window.addEventListener("pageshow", refreshIfVisible);
-    return () => {
-      document.removeEventListener("visibilitychange", refreshIfVisible);
-      window.removeEventListener("focus", refreshIfVisible);
-      window.removeEventListener("pageshow", refreshIfVisible);
-    };
+    return cleanup;
   }, [activeTab]);
 
   useEffect(() => {
@@ -1029,30 +1039,13 @@ function UserManagementPage() {
   }
 
   useEffect(() => {
-    const refreshIfVisible = () => {
-      if (document.hidden) {
-        usersRequestIdRef.current += 1;
-        if (usersTimeoutRef.current) {
-          clearTimeout(usersTimeoutRef.current);
-        }
-        setLoadingUsers(false);
-        loadingUsersRef.current = false;
-        return;
-      }
+    const cleanup = addResumeListeners(() => {
       void resumeSessionIfNeeded().finally(() => {
         loadAllUsers({ force: true });
       });
-    };
+    });
 
-    refreshIfVisible();
-    document.addEventListener("visibilitychange", refreshIfVisible);
-    window.addEventListener("focus", refreshIfVisible);
-    window.addEventListener("pageshow", refreshIfVisible);
-    return () => {
-      document.removeEventListener("visibilitychange", refreshIfVisible);
-      window.removeEventListener("focus", refreshIfVisible);
-      window.removeEventListener("pageshow", refreshIfVisible);
-    };
+    return cleanup;
   }, []);
 
   const filteredUsers = allUsers.filter(user => 
@@ -1570,36 +1563,14 @@ function DefectsPage({ activeTab }) {
       return;
     }
 
-    const refreshIfVisible = () => {
-      if (document.hidden) {
-        defectsRequestIdRef.current += 1;
-        loadingDefectsRef.current = false;
-        setLoading(false);
-        adminUsersRequestIdRef.current += 1;
-        loadingAdminUsersRef.current = false;
-        if (defectsTimeoutRef.current) {
-          clearTimeout(defectsTimeoutRef.current);
-        }
-        if (adminUsersTimeoutRef.current) {
-          clearTimeout(adminUsersTimeoutRef.current);
-        }
-        return;
-      }
+    const cleanup = addResumeListeners(() => {
       void resumeSessionIfNeeded().finally(() => {
         loadDefects();
         loadAdminUsers();
       });
-    };
+    });
 
-    refreshIfVisible();
-    document.addEventListener("visibilitychange", refreshIfVisible);
-    window.addEventListener("focus", refreshIfVisible);
-    window.addEventListener("pageshow", refreshIfVisible);
-    return () => {
-      document.removeEventListener("visibilitychange", refreshIfVisible);
-      window.removeEventListener("focus", refreshIfVisible);
-      window.removeEventListener("pageshow", refreshIfVisible);
-    };
+    return cleanup;
   }, [activeTab]);
 
   // Reset selected recipient when modal opens/closes
