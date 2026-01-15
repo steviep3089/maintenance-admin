@@ -32,26 +32,38 @@ const CACHE_KEYS = {
   defects: "maintenance-admin.defects.v1",
 };
 
-function addResumeListeners(callback) {
+function addResumeListeners(onResume, onSuspend) {
   let lastRunAt = 0;
   const run = () => {
-    if (document.hidden) {
-      return;
-    }
     const now = Date.now();
     if (now - lastRunAt < 1000) {
       return;
     }
     lastRunAt = now;
-    callback();
+    onResume();
+  };
+  const handleVisibility = () => {
+    if (document.hidden) {
+      if (onSuspend) {
+        onSuspend();
+      }
+      return;
+    }
+    run();
   };
 
-  run();
-  window.addEventListener("focus", run);
-  document.addEventListener("visibilitychange", run);
+  handleVisibility();
+  window.addEventListener("focus", handleVisibility);
+  document.addEventListener("visibilitychange", handleVisibility);
+  if (onSuspend) {
+    window.addEventListener("blur", onSuspend);
+  }
   return () => {
-    window.removeEventListener("focus", run);
-    document.removeEventListener("visibilitychange", run);
+    window.removeEventListener("focus", handleVisibility);
+    document.removeEventListener("visibilitychange", handleVisibility);
+    if (onSuspend) {
+      window.removeEventListener("blur", onSuspend);
+    }
   };
 }
 
@@ -606,12 +618,19 @@ function ActionTaskPage({ activeTab }) {
       return;
     }
 
-    const cleanup = addResumeListeners(() => {
-      void resumeSessionIfNeeded().finally(() => {
-        loadDefects();
-        loadUsers();
-      });
-    });
+    const cleanup = addResumeListeners(
+      () => {
+        void resumeSessionIfNeeded().finally(() => {
+          loadDefects();
+          loadUsers();
+        });
+      },
+      () => {
+        usersRequestIdRef.current += 1;
+        setLoadingUsers(false);
+        loadingDefectsRef.current = false;
+      }
+    );
 
     return cleanup;
   }, [activeTab]);
@@ -1039,11 +1058,18 @@ function UserManagementPage() {
   }
 
   useEffect(() => {
-    const cleanup = addResumeListeners(() => {
-      void resumeSessionIfNeeded().finally(() => {
-        loadAllUsers({ force: true });
-      });
-    });
+    const cleanup = addResumeListeners(
+      () => {
+        void resumeSessionIfNeeded().finally(() => {
+          loadAllUsers({ force: true });
+        });
+      },
+      () => {
+        usersRequestIdRef.current += 1;
+        setLoadingUsers(false);
+        loadingUsersRef.current = false;
+      }
+    );
 
     return cleanup;
   }, []);
@@ -1563,12 +1589,21 @@ function DefectsPage({ activeTab }) {
       return;
     }
 
-    const cleanup = addResumeListeners(() => {
-      void resumeSessionIfNeeded().finally(() => {
-        loadDefects();
-        loadAdminUsers();
-      });
-    });
+    const cleanup = addResumeListeners(
+      () => {
+        void resumeSessionIfNeeded().finally(() => {
+          loadDefects();
+          loadAdminUsers();
+        });
+      },
+      () => {
+        defectsRequestIdRef.current += 1;
+        loadingDefectsRef.current = false;
+        setLoading(false);
+        adminUsersRequestIdRef.current += 1;
+        loadingAdminUsersRef.current = false;
+      }
+    );
 
     return cleanup;
   }, [activeTab]);
