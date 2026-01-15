@@ -40,6 +40,9 @@ function addResumeListeners(onResume, onSuspend) {
       return;
     }
     lastRunAt = now;
+    if (onSuspend) {
+      onSuspend();
+    }
     onResume();
   };
   const handleVisibility = () => {
