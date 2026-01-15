@@ -32,6 +32,44 @@ const CACHE_KEYS = {
   defects: "maintenance-admin.defects.v1",
 };
 
+const sessionResumeState = {
+  inFlight: null,
+  lastAttemptAt: 0,
+};
+
+async function resumeSessionIfNeeded() {
+  try {
+    if (sessionResumeState.inFlight) {
+      return sessionResumeState.inFlight.catch(() => null);
+    }
+    const now = Date.now();
+    if (now - sessionResumeState.lastAttemptAt < 5000) {
+      return;
+    }
+    sessionResumeState.lastAttemptAt = now;
+
+    sessionResumeState.inFlight = (async () => {
+      const { data, error } = await supabase.auth.getSession();
+      if (error || !data?.session) {
+        return;
+      }
+      const expiresAtMs = (data.session.expires_at || 0) * 1000;
+      if (expiresAtMs && expiresAtMs - Date.now() < 60000) {
+        await supabase.auth.refreshSession();
+      }
+    })();
+
+    return sessionResumeState.inFlight.catch(() => null);
+  } catch (err) {
+    console.warn("Session resume failed:", err);
+  } finally {
+    if (sessionResumeState.inFlight) {
+      await sessionResumeState.inFlight.catch(() => null);
+      sessionResumeState.inFlight = null;
+    }
+  }
+}
+
 function formatDateTime(value) {
   if (!value) return "";
   const d = new Date(value);
@@ -546,8 +584,10 @@ function ActionTaskPage({ activeTab }) {
       if (document.hidden) {
         return;
       }
-      loadDefects();
-      loadUsers();
+      void resumeSessionIfNeeded().finally(() => {
+        loadDefects();
+        loadUsers();
+      });
     };
 
     refreshIfVisible();
@@ -1024,7 +1064,9 @@ function UserManagementPage() {
       if (document.hidden) {
         return;
       }
-      loadAllUsers({ force: true });
+      void resumeSessionIfNeeded().finally(() => {
+        loadAllUsers({ force: true });
+      });
     };
 
     refreshIfVisible();
@@ -1606,8 +1648,10 @@ function DefectsPage({ activeTab }) {
       if (document.hidden) {
         return;
       }
-      loadDefects();
-      loadAdminUsers();
+      void resumeSessionIfNeeded().finally(() => {
+        loadDefects();
+        loadAdminUsers();
+      });
     };
 
     refreshIfVisible();
