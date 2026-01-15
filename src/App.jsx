@@ -1,6 +1,6 @@
 // src/App.jsx
 import React, { useEffect, useRef, useState } from "react";
-import { supabase } from "./supabaseClient";
+import { supabase, SUPABASE_STORAGE_KEY } from "./supabaseClient";
 import "./App.css";
 import html2pdf from 'html2pdf.js';
 
@@ -75,6 +75,43 @@ const sessionResumeState = {
   lastAttemptAt: 0,
 };
 
+function normalizeStoredSession(value) {
+  if (!value) return null;
+  if (value.currentSession) return value.currentSession;
+  if (value.session) return value.session;
+  if (value.access_token) return value;
+  return null;
+}
+
+function readStoredSession() {
+  try {
+    const raw = localStorage.getItem(SUPABASE_STORAGE_KEY);
+    if (!raw) return null;
+    return normalizeStoredSession(JSON.parse(raw));
+  } catch (err) {
+    console.warn("Session storage read failed:", err);
+    return null;
+  }
+}
+
+function getSessionWithTimeout(timeoutMs = 1500) {
+  const getSessionPromise = supabase.auth.getSession();
+  const timeoutPromise = new Promise((resolve) => {
+    setTimeout(() => {
+      resolve({ data: { session: readStoredSession() }, error: null });
+    }, timeoutMs);
+  });
+  return Promise.race([getSessionPromise, timeoutPromise]);
+}
+
+function refreshSessionWithTimeout(timeoutMs = 1500) {
+  const refreshPromise = supabase.auth.refreshSession();
+  const timeoutPromise = new Promise((resolve) => {
+    setTimeout(() => resolve({ data: null, error: null }), timeoutMs);
+  });
+  return Promise.race([refreshPromise, timeoutPromise]);
+}
+
 async function resumeSessionIfNeeded() {
   try {
     if (document.hidden) {
@@ -90,13 +127,13 @@ async function resumeSessionIfNeeded() {
     sessionResumeState.lastAttemptAt = now;
 
     sessionResumeState.inFlight = (async () => {
-      const { data, error } = await supabase.auth.getSession();
+      const { data, error } = await getSessionWithTimeout();
       if (error || !data?.session) {
         return;
       }
       const expiresAtMs = (data.session.expires_at || 0) * 1000;
       if (expiresAtMs && expiresAtMs - Date.now() < 60000) {
-        await supabase.auth.refreshSession();
+        await refreshSessionWithTimeout();
       }
     })();
 
@@ -126,7 +163,7 @@ async function withAuthRetry(requestFn) {
   if (!result?.error || !isAuthError(result.error)) {
     return result;
   }
-  const refresh = await supabase.auth.refreshSession();
+  const refresh = await refreshSessionWithTimeout();
   if (refresh?.error) {
     return result;
   }
@@ -260,7 +297,7 @@ function ResetPasswordPage({ onDone, allowNonAdmin }) {
         return;
       }
 
-      const { data: { session } } = await supabase.auth.getSession();
+      const { data: { session } } = await getSessionWithTimeout();
       
       if (session?.user) {
         const { data } = await withAuthRetry(() =>
@@ -3430,7 +3467,7 @@ export default function App() {
       try {
         const {
           data: { session },
-        } = await supabase.auth.getSession();
+        } = await getSessionWithTimeout();
         const recovering = isRecoveryUrl();
         const passwordSetup = isPasswordSetupUrl();
 
