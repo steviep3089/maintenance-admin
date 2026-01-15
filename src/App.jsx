@@ -600,58 +600,27 @@ function ActionTaskPage({ activeTab }) {
   const loadingDefectsRef = useRef(false);
   const usersRequestIdRef = useRef(0);
   const usersTimeoutRef = useRef(null);
-  const refreshIntervalRef = useRef(null);
-
   useEffect(() => {
     if (activeTab !== "tasks") {
-      if (refreshIntervalRef.current) {
-        clearInterval(refreshIntervalRef.current);
-        refreshIntervalRef.current = null;
-      }
       return;
     }
 
-    const tick = () => {
+    const refreshIfVisible = () => {
       if (document.hidden) {
         return;
       }
-      console.log("ActionTask tick", {
-        hidden: document.hidden,
-        visibility: document.visibilityState,
-        activeTab,
-        ts: new Date().toISOString(),
-      });
       loadDefects();
       loadUsers();
     };
 
-    tick();
-    refreshIntervalRef.current = setInterval(tick, 20000);
-
-    const handleVisibility = () => {
-      if (document.hidden) {
-        return;
-      }
-      console.log("ActionTask visibility/focus/pageshow", {
-        hidden: document.hidden,
-        visibility: document.visibilityState,
-        activeTab,
-        ts: new Date().toISOString(),
-      });
-      tick();
-    };
-
-    document.addEventListener("visibilitychange", handleVisibility);
-    window.addEventListener("focus", handleVisibility);
-    window.addEventListener("pageshow", handleVisibility);
+    refreshIfVisible();
+    document.addEventListener("visibilitychange", refreshIfVisible);
+    window.addEventListener("focus", refreshIfVisible);
+    window.addEventListener("pageshow", refreshIfVisible);
     return () => {
-      if (refreshIntervalRef.current) {
-        clearInterval(refreshIntervalRef.current);
-        refreshIntervalRef.current = null;
-      }
-      document.removeEventListener("visibilitychange", handleVisibility);
-      window.removeEventListener("focus", handleVisibility);
-      window.removeEventListener("pageshow", handleVisibility);
+      document.removeEventListener("visibilitychange", refreshIfVisible);
+      window.removeEventListener("focus", refreshIfVisible);
+      window.removeEventListener("pageshow", refreshIfVisible);
     };
   }, [activeTab]);
 
@@ -1026,7 +995,6 @@ function UserManagementPage() {
   const usersRequestIdRef = useRef(0);
   const usersTimeoutRef = useRef(null);
   const [usersStale, setUsersStale] = useState(false);
-  const usersRefreshIntervalRef = useRef(null);
   const isLocalhost =
     window.location.hostname === "localhost" ||
     window.location.hostname === "127.0.0.1";
@@ -1125,18 +1093,6 @@ function UserManagementPage() {
   }
 
   useEffect(() => {
-    const tick = () => {
-      if (document.hidden) {
-        return;
-      }
-      console.log("UserManagement tick", {
-        hidden: document.hidden,
-        visibility: document.visibilityState,
-        ts: new Date().toISOString(),
-      });
-      loadAllUsers();
-    };
-
     const handleVisibility = () => {
       if (document.hidden) {
         usersRequestIdRef.current += 1;
@@ -1145,34 +1101,16 @@ function UserManagementPage() {
         if (usersTimeoutRef.current) {
           clearTimeout(usersTimeoutRef.current);
         }
-        console.log("UserManagement hidden", {
-          hidden: document.hidden,
-          visibility: document.visibilityState,
-          ts: new Date().toISOString(),
-        });
         return;
       }
-      console.log("UserManagement visibility/focus/pageshow", {
-        hidden: document.hidden,
-        visibility: document.visibilityState,
-        ts: new Date().toISOString(),
-      });
-      tick();
+      loadAllUsers({ force: true });
     };
 
-    if (!document.hidden) {
-      loadAllUsers({ force: true });
-    }
-
-    usersRefreshIntervalRef.current = setInterval(tick, 20000);
+    handleVisibility();
     document.addEventListener("visibilitychange", handleVisibility);
     window.addEventListener("focus", handleVisibility);
     window.addEventListener("pageshow", handleVisibility);
     return () => {
-      if (usersRefreshIntervalRef.current) {
-        clearInterval(usersRefreshIntervalRef.current);
-        usersRefreshIntervalRef.current = null;
-      }
       document.removeEventListener("visibilitychange", handleVisibility);
       window.removeEventListener("focus", handleVisibility);
       window.removeEventListener("pageshow", handleVisibility);
@@ -1575,7 +1513,6 @@ function DefectsPage({ activeTab }) {
   const [adminUsersStale, setAdminUsersStale] = useState(false);
   const [lastDefectsSync, setLastDefectsSync] = useState(null);
   const [lastAdminUsersSync, setLastAdminUsersSync] = useState(null);
-  const defectsRefreshIntervalRef = useRef(null);
 
   async function loadAdminUsers() {
     let didTimeout = false;
@@ -1759,26 +1696,8 @@ function DefectsPage({ activeTab }) {
 
   useEffect(() => {
     if (activeTab !== "defects") {
-      if (defectsRefreshIntervalRef.current) {
-        clearInterval(defectsRefreshIntervalRef.current);
-        defectsRefreshIntervalRef.current = null;
-      }
       return;
     }
-
-    const tick = () => {
-      if (document.hidden) {
-        return;
-      }
-      console.log("Defects tick", {
-        hidden: document.hidden,
-        visibility: document.visibilityState,
-        activeTab,
-        ts: new Date().toISOString(),
-      });
-      loadDefects();
-      loadAdminUsers();
-    };
 
     const handleVisibility = () => {
       if (document.hidden) {
@@ -1793,36 +1712,17 @@ function DefectsPage({ activeTab }) {
         if (adminUsersTimeoutRef.current) {
           clearTimeout(adminUsersTimeoutRef.current);
         }
-        console.log("Defects hidden", {
-          hidden: document.hidden,
-          visibility: document.visibilityState,
-          activeTab,
-          ts: new Date().toISOString(),
-        });
         return;
       }
-      console.log("Defects visibility/focus/pageshow", {
-        hidden: document.hidden,
-        visibility: document.visibilityState,
-        activeTab,
-        ts: new Date().toISOString(),
-      });
-      tick();
+      loadDefects();
+      loadAdminUsers();
     };
 
-    if (!document.hidden) {
-      tick();
-    }
-
-    defectsRefreshIntervalRef.current = setInterval(tick, 20000);
+    handleVisibility();
     document.addEventListener("visibilitychange", handleVisibility);
     window.addEventListener("focus", handleVisibility);
     window.addEventListener("pageshow", handleVisibility);
     return () => {
-      if (defectsRefreshIntervalRef.current) {
-        clearInterval(defectsRefreshIntervalRef.current);
-        defectsRefreshIntervalRef.current = null;
-      }
       document.removeEventListener("visibilitychange", handleVisibility);
       window.removeEventListener("focus", handleVisibility);
       window.removeEventListener("pageshow", handleVisibility);
