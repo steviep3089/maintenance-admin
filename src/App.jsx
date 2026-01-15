@@ -111,6 +111,28 @@ async function resumeSessionIfNeeded() {
   }
 }
 
+function isAuthError(err) {
+  if (!err) return false;
+  const status = err.status || err.statusCode;
+  if (status === 401 || status === 403) {
+    return true;
+  }
+  const message = `${err.message || ""}`.toLowerCase();
+  return message.includes("jwt");
+}
+
+async function withAuthRetry(requestFn) {
+  const result = await requestFn();
+  if (!result?.error || !isAuthError(result.error)) {
+    return result;
+  }
+  const refresh = await supabase.auth.refreshSession();
+  if (refresh?.error) {
+    return result;
+  }
+  return requestFn();
+}
+
 function formatDateTime(value) {
   if (!value) return "";
   const d = new Date(value);
@@ -241,11 +263,13 @@ function ResetPasswordPage({ onDone, allowNonAdmin }) {
       const { data: { session } } = await supabase.auth.getSession();
       
       if (session?.user) {
-        const { data } = await supabase
-          .from("user_roles")
-          .select("role")
-          .eq("user_id", session.user.id)
-          .single();
+        const { data } = await withAuthRetry(() =>
+          supabase
+            .from("user_roles")
+            .select("role")
+            .eq("user_id", session.user.id)
+            .single()
+        );
         
         setUserRole(data?.role || null);
       }
@@ -654,10 +678,12 @@ function ActionTaskPage({ activeTab }) {
     }
     loadingDefectsRef.current = true;
     try {
-      const { data, error } = await supabase
-        .from("defects")
-        .select("*")
-        .order("created_at", { ascending: false });
+      const { data, error } = await withAuthRetry(() =>
+        supabase
+          .from("defects")
+          .select("*")
+          .order("created_at", { ascending: false })
+      );
 
       if (error) throw error;
       setDefects(data || []);
@@ -690,7 +716,9 @@ function ActionTaskPage({ activeTab }) {
       usersRequestIdRef.current = requestId;
 
       // Call edge function to get all users
-      const { data, error } = await supabase.functions.invoke('list-users');
+      const { data, error } = await withAuthRetry(() =>
+        supabase.functions.invoke('list-users')
+      );
 
       if (usersRequestIdRef.current !== requestId) {
         return;
@@ -1023,7 +1051,9 @@ function UserManagementPage() {
     const requestId = usersRequestIdRef.current + 1;
     usersRequestIdRef.current = requestId;
     try {
-      const { data: usersData, error: usersError } = await supabase.functions.invoke('list-users');
+      const { data: usersData, error: usersError } = await withAuthRetry(() =>
+        supabase.functions.invoke('list-users')
+      );
       if (usersRequestIdRef.current !== requestId) {
         return;
       }
@@ -1487,7 +1517,9 @@ function DefectsPage({ activeTab }) {
       adminUsersRequestIdRef.current = requestId;
 
       // Get admin user IDs (using service_role via edge function to bypass RLS)
-      const { data: rolesData, error: roleError } = await supabase.functions.invoke('get-admin-users');
+      const { data: rolesData, error: roleError } = await withAuthRetry(() =>
+        supabase.functions.invoke('get-admin-users')
+      );
 
       if (adminUsersRequestIdRef.current !== requestId) {
         return;
@@ -1549,10 +1581,12 @@ function DefectsPage({ activeTab }) {
     defectsRequestIdRef.current = requestId;
     
     try {
-      const { data, error } = await supabase
-        .from("defects")
-        .select("*")
-        .order("created_at", { ascending: false });
+      const { data, error } = await withAuthRetry(() =>
+        supabase
+          .from("defects")
+          .select("*")
+          .order("created_at", { ascending: false })
+      );
 
       if (defectsRequestIdRef.current !== requestId) {
         return;
@@ -1896,11 +1930,13 @@ function DefectsPage({ activeTab }) {
 
   async function loadActivity(defectId) {
     try {
-      const { data, error } = await supabase
-        .from("defect_activity")
-        .select("*")
-        .eq("defect_id", defectId)
-        .order("created_at", { ascending: false });
+      const { data, error } = await withAuthRetry(() =>
+        supabase
+          .from("defect_activity")
+          .select("*")
+          .eq("defect_id", defectId)
+          .order("created_at", { ascending: false })
+      );
 
       if (!error) {
         setActivityLogs((prev) => ({ ...prev, [defectId]: data || [] }));
@@ -3368,11 +3404,13 @@ export default function App() {
     }
 
     const userId = currentSession.user.id;
-    const { data, error } = await supabase
-      .from("user_roles")
-      .select("role")
-      .eq("user_id", userId)
-      .maybeSingle();
+    const { data, error } = await withAuthRetry(() =>
+      supabase
+        .from("user_roles")
+        .select("role")
+        .eq("user_id", userId)
+        .maybeSingle()
+    );
 
     if (error) {
       console.error("Error loading role:", error);
