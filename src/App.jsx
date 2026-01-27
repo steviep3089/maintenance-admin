@@ -2347,6 +2347,35 @@ function DefectsPage({ activeTab }) {
 
   const shownCount = filteredDefects.length;
 
+  const reportDarkBlue = "#17527c";
+  const reportLightBlue = "#d1dce5";
+
+  const blankReportTemplate = {
+    __isBlank: true,
+    asset: "",
+    category: "",
+    title: "",
+    priority: "",
+    status: "",
+    submitted_by: "",
+    created_at: "",
+    closed_out: "",
+    description: "",
+    actions_taken: "",
+    repair_company: "",
+    photo_urls: [],
+    repair_photos: [],
+  };
+
+  const isBlankReport = Boolean(selectedDefectForReport?.__isBlank);
+  const reportData = selectedDefectForReport || {};
+  const reportActivityLogs = !isBlankReport && reportData.id
+    ? (activityLogs[reportData.id] || [])
+    : [];
+  const displayReportValue = (value, fallback = "-") =>
+    isBlankReport ? "" : (value ? value : fallback);
+
+
   return (
     <div style={{ padding: "20px 30px" }}>
       {/* Refresh and Stats Bar */}
@@ -2465,7 +2494,7 @@ function DefectsPage({ activeTab }) {
               </div>
             </div>
 
-            <div style={{ alignSelf: "flex-end" }}>
+            <div style={{ alignSelf: "flex-end", display: "flex", gap: 8 }}>
               <button
                 onClick={() => {
                   if (expandedIds.length === 0) {
@@ -2489,6 +2518,22 @@ function DefectsPage({ activeTab }) {
                 }}
               >
                 Generate Report
+              </button>
+              <button
+                onClick={() => {
+                  setSelectedDefectForReport(blankReportTemplate);
+                }}
+                style={{
+                  padding: "8px 16px",
+                  borderRadius: 6,
+                  border: "1px solid #1d4ed8",
+                  backgroundColor: "white",
+                  color: "#1d4ed8",
+                  fontWeight: 600,
+                  cursor: "pointer",
+                }}
+              >
+                Blank Report
               </button>
             </div>
           </div>
@@ -2972,12 +3017,12 @@ function DefectsPage({ activeTab }) {
 
             <div id="report-content" style={{ fontFamily: "Arial, sans-serif", fontSize: "9pt", lineHeight: 1.4, color: "#000", textAlign: "left", width: "100%" }}>
               {/* Header - Logo and Title */}
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6, paddingBottom: 4, borderBottom: "2px solid #333" }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6, paddingBottom: 4, borderBottom: `2px solid ${reportDarkBlue}` }}>
                 <div style={{ textAlign: "left" }}>
-                  <h1 style={{ margin: 0, fontSize: "14pt", fontWeight: "bold" }}>DEFECT REPORT</h1>
+                  <h1 style={{ margin: 0, fontSize: "14pt", fontWeight: "bold", color: reportDarkBlue }}>DEFECT REPORT</h1>
                 </div>
                 <img 
-                  src="/holcim-logo.png" 
+                  src="/holcim.png" 
                   alt="Logo" 
                   style={{ maxHeight: 40, maxWidth: 100 }}
                 />
@@ -2987,46 +3032,48 @@ function DefectsPage({ activeTab }) {
               <table style={{ width: "100%", marginBottom: 4, borderCollapse: "collapse", fontSize: "8pt" }}>
                 <tbody>
                   <tr>
-                    <td style={{ padding: "2px 4px", backgroundColor: "#e8e8e8", border: "1px solid #999", width: "15%", fontWeight: "bold" }}>Asset</td>
-                    <td style={{ padding: "2px 4px", border: "1px solid #999", width: "35%", fontWeight: "bold" }}>{selectedDefectForReport.asset}</td>
-                    <td style={{ padding: "2px 4px", backgroundColor: "#e8e8e8", border: "1px solid #999", width: "15%", fontWeight: "bold" }}>Category</td>
-                    <td style={{ padding: "2px 4px", border: "1px solid #999", width: "35%" }}>{selectedDefectForReport.category || "—"}</td>
+                    <td style={{ padding: "2px 4px", backgroundColor: reportLightBlue, border: "1px solid #999", width: "15%", fontWeight: "bold" }}>Asset</td>
+                    <td style={{ padding: "2px 4px", border: "1px solid #999", width: "35%", fontWeight: "bold" }}>{displayReportValue(reportData.asset)}</td>
+                    <td style={{ padding: "2px 4px", backgroundColor: reportLightBlue, border: "1px solid #999", width: "15%", fontWeight: "bold" }}>Category</td>
+                    <td style={{ padding: "2px 4px", border: "1px solid #999", width: "35%" }}>{displayReportValue(reportData.category)}</td>
                   </tr>
                   <tr>
-                    <td style={{ padding: "4px 6px", backgroundColor: "#e8e8e8", border: "1px solid #999", fontWeight: "bold" }}>Title</td>
-                    <td style={{ padding: "4px 6px", border: "1px solid #999" }}>{selectedDefectForReport.title}</td>
-                    <td style={{ padding: "4px 6px", backgroundColor: "#e8e8e8", border: "1px solid #999", fontWeight: "bold" }}>Priority</td>
-                    <td style={{ padding: "4px 6px", border: "1px solid #999" }}>{selectedDefectForReport.priority || "—"}</td>
+                    <td style={{ padding: "4px 6px", backgroundColor: reportLightBlue, border: "1px solid #999", fontWeight: "bold" }}>Title</td>
+                    <td style={{ padding: "4px 6px", border: "1px solid #999" }}>{displayReportValue(reportData.title)}</td>
+                    <td style={{ padding: "4px 6px", backgroundColor: reportLightBlue, border: "1px solid #999", fontWeight: "bold" }}>Priority</td>
+                    <td style={{ padding: "4px 6px", border: "1px solid #999" }}>{displayReportValue(reportData.priority)}</td>
                   </tr>
                   <tr>
-                    <td style={{ padding: "4px 6px", backgroundColor: "#e8e8e8", border: "1px solid #999", fontWeight: "bold" }}>Status</td>
-                    <td style={{ padding: "4px 6px", border: "1px solid #999" }}>{selectedDefectForReport.status || "Reported"}</td>
-                    <td style={{ padding: "4px 6px", backgroundColor: "#e8e8e8", border: "1px solid #999", fontWeight: "bold" }}>Submitted By</td>
-                    <td style={{ padding: "4px 6px", border: "1px solid #999" }}>{selectedDefectForReport.submitted_by || "—"}</td>
+                    <td style={{ padding: "4px 6px", backgroundColor: reportLightBlue, border: "1px solid #999", fontWeight: "bold" }}>Status</td>
+                    <td style={{ padding: "4px 6px", border: "1px solid #999" }}>{displayReportValue(reportData.status, "Reported")}</td>
+                    <td style={{ padding: "4px 6px", backgroundColor: reportLightBlue, border: "1px solid #999", fontWeight: "bold" }}>Submitted By</td>
+                    <td style={{ padding: "4px 6px", border: "1px solid #999" }}>{displayReportValue(reportData.submitted_by)}</td>
                   </tr>
                   <tr>
-                    <td style={{ padding: "4px 6px", backgroundColor: "#e8e8e8", border: "1px solid #999", fontWeight: "bold" }}>Submitted At</td>
-                    <td style={{ padding: "4px 6px", border: "1px solid #999" }}>{formatDateTime(selectedDefectForReport.created_at) || "—"}</td>
-                    <td style={{ padding: "4px 6px", backgroundColor: "#e8e8e8", border: "1px solid #999", fontWeight: "bold" }}>Closed Out</td>
-                    <td style={{ padding: "4px 6px", border: "1px solid #999" }}>{selectedDefectForReport.closed_out ? formatDateTime(selectedDefectForReport.closed_out) : "—"}</td>
+                    <td style={{ padding: "4px 6px", backgroundColor: reportLightBlue, border: "1px solid #999", fontWeight: "bold" }}>Submitted At</td>
+                    <td style={{ padding: "4px 6px", border: "1px solid #999" }}>{isBlankReport ? "" : (formatDateTime(reportData.created_at) || "-")}</td>
+                    <td style={{ padding: "4px 6px", backgroundColor: reportLightBlue, border: "1px solid #999", fontWeight: "bold" }}>Closed Out</td>
+                    <td style={{ padding: "4px 6px", border: "1px solid #999" }}>{isBlankReport ? "" : (reportData.closed_out ? formatDateTime(reportData.closed_out) : "-")}</td>
                   </tr>
                 </tbody>
               </table>
 
               {/* Description */}
               <div style={{ marginBottom: 4 }}>
-                <div style={{ fontSize: "9pt", fontWeight: "bold", marginBottom: 2, padding: "1px 4px", backgroundColor: "#333", color: "#fff" }}>DESCRIPTION</div>
+                <div style={{ fontSize: "9pt", fontWeight: "bold", marginBottom: 2, padding: "1px 4px", backgroundColor: "white", color: reportDarkBlue, borderBottom: `1px solid ${reportDarkBlue}` }}>DESCRIPTION</div>
                 <div style={{ padding: "4px", border: "1px solid #999", backgroundColor: "#fafafa", fontSize: "8pt", minHeight: "20px", textAlign: "left" }}>
-                  {selectedDefectForReport.description || "No description"}
+                  {isBlankReport ? "" : (reportData.description || "No description")}
                 </div>
               </div>
 
               {/* Defect Photos */}
               <div style={{ marginBottom: 4, pageBreakInside: "avoid" }}>
-                <div style={{ fontSize: "9pt", fontWeight: "bold", marginBottom: 2, padding: "1px 4px", backgroundColor: "#333", color: "#fff" }}>DEFECT PHOTOS</div>
-                {selectedDefectForReport.photo_urls && selectedDefectForReport.photo_urls.length > 0 ? (
+                <div style={{ fontSize: "9pt", fontWeight: "bold", marginBottom: 2, padding: "1px 4px", backgroundColor: "white", color: reportDarkBlue, borderBottom: `1px solid ${reportDarkBlue}` }}>DEFECT PHOTOS</div>
+                {isBlankReport ? (
+                  <div style={{ padding: "4px", border: "1px solid #999", backgroundColor: "#fff", minHeight: "44px" }} />
+                ) : reportData.photo_urls && reportData.photo_urls.length > 0 ? (
                   <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 4, marginTop: 2 }}>
-                    {selectedDefectForReport.photo_urls.map((url, idx) => (
+                    {reportData.photo_urls.map((url, idx) => (
                       <div key={idx} style={{ border: "1px solid #999", padding: 2, backgroundColor: "#fff", minHeight: "40px", display: "flex", flexDirection: "column", alignItems: "center" }}>
                         <img
                           src={url}
@@ -3046,18 +3093,20 @@ function DefectsPage({ activeTab }) {
 
               {/* Actions Taken - Middle of page */}
               <div style={{ marginBottom: 4, marginTop: 4 }}>
-                <div style={{ fontSize: "9pt", fontWeight: "bold", marginBottom: 2, padding: "1px 4px", backgroundColor: "#333", color: "#fff" }}>ACTIONS TAKEN</div>
+                <div style={{ fontSize: "9pt", fontWeight: "bold", marginBottom: 2, padding: "1px 4px", backgroundColor: "white", color: reportDarkBlue, borderBottom: `1px solid ${reportDarkBlue}` }}>ACTIONS TAKEN</div>
                 <div style={{ padding: "4px", border: "1px solid #999", backgroundColor: "#fafafa", fontSize: "8pt", minHeight: "20px", textAlign: "left" }}>
-                  {selectedDefectForReport.actions_taken || "—"}
+                  {isBlankReport ? "" : (reportData.actions_taken || "-")}
                 </div>
               </div>
 
               {/* Repair Photos */}
               <div style={{ marginBottom: 4, pageBreakInside: "avoid" }}>
-                <div style={{ fontSize: "9pt", fontWeight: "bold", marginBottom: 2, padding: "1px 4px", backgroundColor: "#333", color: "#fff" }}>REPAIR PHOTOS</div>
-                {selectedDefectForReport.repair_photos && selectedDefectForReport.repair_photos.length > 0 ? (
+                <div style={{ fontSize: "9pt", fontWeight: "bold", marginBottom: 2, padding: "1px 4px", backgroundColor: "white", color: reportDarkBlue, borderBottom: `1px solid ${reportDarkBlue}` }}>REPAIR PHOTOS</div>
+                {isBlankReport ? (
+                  <div style={{ padding: "4px", border: "1px solid #999", backgroundColor: "#fff", minHeight: "44px" }} />
+                ) : reportData.repair_photos && reportData.repair_photos.length > 0 ? (
                   <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 4, marginTop: 2 }}>
-                    {selectedDefectForReport.repair_photos.map((url, idx) => (
+                    {reportData.repair_photos.map((url, idx) => (
                       <div key={idx} style={{ border: "1px solid #999", padding: 2, backgroundColor: "#fff", minHeight: "40px", display: "flex", flexDirection: "column", alignItems: "center" }}>
                         <img
                           src={url}
@@ -3077,30 +3126,49 @@ function DefectsPage({ activeTab }) {
 
               {/* Repair Company */}
               <div style={{ marginBottom: 4 }}>
-                <div style={{ fontSize: "9pt", fontWeight: "bold", marginBottom: 2, padding: "1px 4px", backgroundColor: "#333", color: "#fff" }}>REPAIR COMPANY / PERSON</div>
+                <div style={{ fontSize: "9pt", fontWeight: "bold", marginBottom: 2, padding: "1px 4px", backgroundColor: "white", color: reportDarkBlue, borderBottom: `1px solid ${reportDarkBlue}` }}>REPAIR COMPANY / PERSON</div>
                 <div style={{ padding: "4px", border: "1px solid #999", backgroundColor: "#fafafa", fontSize: "8pt", textAlign: "left" }}>
-                  {selectedDefectForReport.repair_company || "—"}
+                  {isBlankReport ? "" : (reportData.repair_company || "-")}
                 </div>
               </div>
 
               {/* Activity Log */}
               <div style={{ marginTop: 4 }}>
-                <div style={{ fontSize: "9pt", fontWeight: "bold", marginBottom: 2, padding: "1px 4px", backgroundColor: "#333", color: "#fff" }}>ACTIVITY LOG</div>
-                {activityLogs[selectedDefectForReport.id] && activityLogs[selectedDefectForReport.id].length > 0 ? (
+                <div style={{ fontSize: "9pt", fontWeight: "bold", marginBottom: 2, padding: "1px 4px", backgroundColor: "white", color: reportDarkBlue, borderBottom: `1px solid ${reportDarkBlue}` }}>ACTIVITY LOG</div>
+                {reportActivityLogs.length > 0 ? (
                   <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "7pt" }}>
                     <thead>
-                      <tr style={{ backgroundColor: "#e8e8e8" }}>
+                      <tr style={{ backgroundColor: reportLightBlue }}>
                         <th style={{ padding: "2px 4px", border: "1px solid #999", textAlign: "left", width: "30%" }}>Date/Time</th>
                         <th style={{ padding: "2px 4px", border: "1px solid #999", textAlign: "left", width: "25%" }}>User</th>
                         <th style={{ padding: "2px 4px", border: "1px solid #999", textAlign: "left" }}>Action</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {activityLogs[selectedDefectForReport.id].map((log) => (
+                      {reportActivityLogs.map((log) => (
                         <tr key={log.id}>
                           <td style={{ padding: "2px 4px", border: "1px solid #999", fontSize: "6pt" }}>{formatDateTime(log.created_at)}</td>
                           <td style={{ padding: "2px 4px", border: "1px solid #999", fontSize: "6pt" }}>{log.performed_by}</td>
                           <td style={{ padding: "2px 4px", border: "1px solid #999", fontSize: "6pt" }}>{log.message}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                ) : isBlankReport ? (
+                  <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "7pt" }}>
+                    <thead>
+                      <tr style={{ backgroundColor: reportLightBlue }}>
+                        <th style={{ padding: "2px 4px", border: "1px solid #999", textAlign: "left", width: "30%" }}>Date/Time</th>
+                        <th style={{ padding: "2px 4px", border: "1px solid #999", textAlign: "left", width: "25%" }}>User</th>
+                        <th style={{ padding: "2px 4px", border: "1px solid #999", textAlign: "left" }}>Action</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {[0, 1, 2].map((idx) => (
+                        <tr key={idx}>
+                          <td style={{ padding: "6px 4px", border: "1px solid #999" }} />
+                          <td style={{ padding: "6px 4px", border: "1px solid #999" }} />
+                          <td style={{ padding: "6px 4px", border: "1px solid #999" }} />
                         </tr>
                       ))}
                     </tbody>
@@ -3119,29 +3187,31 @@ function DefectsPage({ activeTab }) {
             </div>
 
             {/* Recipient Selection */}
-            <div style={{ marginTop: 16 }} className="no-print">
-              <label style={{ display: "block", marginBottom: 8, fontWeight: 600, fontSize: "14px" }}>
-                Email Recipient:
-              </label>
-              <select
-                value={selectedRecipientEmail}
-                onChange={(e) => setSelectedRecipientEmail(e.target.value)}
-                style={{
-                  width: "100%",
-                  padding: "8px 12px",
-                  borderRadius: 6,
-                  border: "1px solid #d1d5db",
-                  fontSize: "14px",
-                }}
-              >
-                <option value="" disabled>Please select an Administrator to send the report to</option>
-                {adminUsers.map((email) => (
-                  <option key={email} value={email}>
-                    {email}
-                  </option>
-                ))}
-              </select>
-            </div>
+            {!isBlankReport && (
+              <div style={{ marginTop: 16 }} className="no-print">
+                <label style={{ display: "block", marginBottom: 8, fontWeight: 600, fontSize: "14px" }}>
+                  Email Recipient:
+                </label>
+                <select
+                  value={selectedRecipientEmail}
+                  onChange={(e) => setSelectedRecipientEmail(e.target.value)}
+                  style={{
+                    width: "100%",
+                    padding: "8px 12px",
+                    borderRadius: 6,
+                    border: "1px solid #d1d5db",
+                    fontSize: "14px",
+                  }}
+                >
+                  <option value="" disabled>Please select an Administrator to send the report to</option>
+                  {adminUsers.map((email) => (
+                    <option key={email} value={email}>
+                      {email}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
 
             <div style={{ marginTop: 16, display: "flex", gap: 12 }} className="no-print">
               <button
@@ -3158,38 +3228,43 @@ function DefectsPage({ activeTab }) {
               >
                 Print / Save as PDF
               </button>
-              <button
-                onClick={() => sendReportEmail(selectedDefectForReport)}
-                style={{
-                  padding: "10px 20px",
-                  borderRadius: 6,
-                  border: "1px solid #1d4ed8",
-                  backgroundColor: "white",
-                  color: "#1d4ed8",
-                  fontWeight: 600,
-                  cursor: "pointer",
-                }}
-              >
-                📧 Email Report to Me
-              </button>
-              <button
-                onClick={() => saveToDrive(selectedDefectForReport)}
-                disabled={selectedDefectForReport?.status !== "Completed"}
-                style={{
-                  padding: "10px 20px",
-                  borderRadius: 6,
-                  border: "1px solid #10b981",
-                  backgroundColor: selectedDefectForReport?.status !== "Completed" ? "#e5e5e5" : "white",
-                  color: selectedDefectForReport?.status !== "Completed" ? "#999" : "#10b981",
-                  fontWeight: 600,
-                  cursor: selectedDefectForReport?.status !== "Completed" ? "not-allowed" : "pointer",
-                  opacity: selectedDefectForReport?.status !== "Completed" ? 0.5 : 1,
-                }}
-                title={selectedDefectForReport?.status !== "Completed" ? "Can only save completed defects to Drive" : ""}
-              >
-                💾 Save to Drive {selectedDefectForReport?.status !== "Completed" && "(Completed Only)"}
-              </button>
+              {!isBlankReport && (
+                <>
+                  <button
+                    onClick={() => sendReportEmail(selectedDefectForReport)}
+                    style={{
+                      padding: "10px 20px",
+                      borderRadius: 6,
+                      border: "1px solid #1d4ed8",
+                      backgroundColor: "white",
+                      color: "#1d4ed8",
+                      fontWeight: 600,
+                      cursor: "pointer",
+                    }}
+                  >
+                    Email Report to Me
+                  </button>
+                  <button
+                    onClick={() => saveToDrive(selectedDefectForReport)}
+                    disabled={selectedDefectForReport?.status !== "Completed"}
+                    style={{
+                      padding: "10px 20px",
+                      borderRadius: 6,
+                      border: "1px solid #10b981",
+                      backgroundColor: selectedDefectForReport?.status !== "Completed" ? "#e5e5e5" : "white",
+                      color: selectedDefectForReport?.status !== "Completed" ? "#999" : "#10b981",
+                      fontWeight: 600,
+                      cursor: selectedDefectForReport?.status !== "Completed" ? "not-allowed" : "pointer",
+                      opacity: selectedDefectForReport?.status !== "Completed" ? 0.5 : 1,
+                    }}
+                    title={selectedDefectForReport?.status !== "Completed" ? "Can only save completed defects to Drive" : ""}
+                  >
+                    Save to Drive {selectedDefectForReport?.status !== "Completed" && "(Completed Only)"}
+                  </button>
+                </>
+              )}
             </div>
+
           </div>
         </div>
       )}
