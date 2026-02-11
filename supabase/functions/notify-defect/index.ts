@@ -132,7 +132,8 @@ serve(async (req) => {
       2: 'Major',
       3: 'Routine',
       4: 'Minor',
-      5: 'Cosmetic'
+      5: 'Cosmetic',
+      6: 'Improvement / Preventative maintenance'
     }
     const priorityLabel = priorityLabels[defect.priority] || 'Unknown'
     const priorityColors: Record<number, string> = {
@@ -140,7 +141,8 @@ serve(async (req) => {
       2: '#ff944d',
       3: '#ffd24d',
       4: '#4da6ff',
-      5: '#d9d9d9'
+      5: '#d9d9d9',
+      6: '#3cb371'
     }
     const priorityColor = priorityColors[defect.priority] || '#666'
 
