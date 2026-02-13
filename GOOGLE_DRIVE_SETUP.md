@@ -1,4 +1,6 @@
-# Google Drive Setup Guide
+# Google Drive Setup Guide (Server-Side)
+
+This portal uploads Drive reports through a Supabase Edge Function using a Google service account. No user sign-in prompts are required.
 
 ## Steps to Enable Google Drive Storage
 
@@ -15,107 +17,73 @@
 2. Search for "Google Drive API"
 3. Click on it and press **Enable**
 
-### 3. Create OAuth 2.0 Credentials
+### 3. Create a Service Account
 
 1. Go to **APIs & Services** → **Credentials**
-2. Click **+ CREATE CREDENTIALS** → **OAuth client ID**
-3. If prompted, configure the OAuth consent screen:
-   - User Type: **External**
-   - App name: "Maintenance Portal"
-   - User support email: your email
-   - Developer contact: your email
-   - Add test users (your admin emails)
-   - Click **Save and Continue** through the scopes (no need to add any)
-4. Back at Create OAuth client ID:
-   - Application type: **Web application**
-   - Name: "Maintenance Portal Web Client"
-   - Authorized JavaScript origins:
-     - `http://localhost:5173` (for development)
-     - Add your production URL when deployed
-   - Authorized redirect URIs:
-     - `http://localhost:5173` (for development)
-     - Add your production URL when deployed
-5. Click **Create**
-6. **Copy the Client ID** (looks like: `123456789-abc.apps.googleusercontent.com`)
+2. Click **+ CREATE CREDENTIALS** → **Service account**
+3. Name it "maintenance-portal-drive" (or similar)
+4. Click **Create and Continue**
+5. You can skip role assignment (Drive access is via folder sharing)
+6. Click **Done**
 
-### 4. Create API Key
+### 4. Create a Service Account Key
 
-1. Go to **APIs & Services** → **Credentials**
-2. Click **+ CREATE CREDENTIALS** → **API key**
-3. **Copy the API key**
-4. (Optional) Click **Restrict Key**:
-   - API restrictions: Select "Google Drive API"
-   - Save
+1. Open the new service account
+2. Go to the **Keys** tab
+3. Click **Add Key** → **Create new key**
+4. Choose **JSON** and download the key
 
-### 5. Create/Get Google Drive Folder ID
+### 5. Share the Drive Folder
 
-1. Go to [Google Drive](https://drive.google.com/)
-2. Create a new folder called "Maintenance Reports" (or use existing folder)
-3. Open the folder
-4. Look at the URL in your browser: `https://drive.google.com/drive/folders/FOLDER_ID_HERE`
-5. **Copy the FOLDER_ID** (the long string after `/folders/`)
+1. Open your target Google Drive folder
+2. Click **Share**
+3. Add the service account email (from the JSON key) as **Editor**
 
-### 6. Update App.jsx Configuration
+> For Shared Drives: add the service account as a member of the Shared Drive (Manager or Content manager) and ensure it can access the folder.
 
-Open `src/App.jsx` and replace these lines (around line 8-11):
+### 6. Set Supabase Function Environment Variables
 
-```javascript
-const GOOGLE_CLIENT_ID = 'YOUR_GOOGLE_CLIENT_ID.apps.googleusercontent.com';
-const GOOGLE_API_KEY = 'YOUR_GOOGLE_API_KEY';
-const GOOGLE_DRIVE_FOLDER_ID = 'YOUR_FOLDER_ID';
+In your Supabase project settings, add these environment variables:
+
+- `GOOGLE_SERVICE_ACCOUNT_JSON` = the entire JSON key contents
+- `GOOGLE_DRIVE_FOLDER_ID` = the folder ID from the Drive URL
+
+Notes:
+- Keep the JSON exactly as-is (including line breaks). Supabase supports multiline secrets.
+- Do not commit the JSON key to git.
+
+### 7. Deploy the Edge Function
+
+Deploy the new function:
+
+```bash
+supabase functions deploy upload-drive
 ```
 
-With your actual values:
-
-```javascript
-const GOOGLE_CLIENT_ID = '123456789-abc.apps.googleusercontent.com'; // From step 3
-const GOOGLE_API_KEY = 'AIzaSyXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX'; // From step 4
-const GOOGLE_DRIVE_FOLDER_ID = '1a2B3c4D5e6F7g8H9i0J'; // From step 5
-```
-
-### 7. Test the Integration
+### 8. Test the Integration
 
 1. Start your dev server: `npm run dev`
 2. Open the portal in your browser
-3. Generate a report and click "📧 Email Report to Me"
-4. On first use, a Google sign-in popup will appear
-5. Sign in and grant access to Google Drive
-6. The PDF will be emailed AND saved to your Google Drive folder!
-
-## How It Works
-
-- When you click "📧 Email Report to Me", the system:
-  1. Generates a PDF with all defect details and photos (embedded as base64)
-  2. Sends the PDF via email to the current user
-  3. Uploads the same PDF to your Google Drive folder
-  4. Shows success message for both actions
-
-- The first time you use it, you'll be prompted to sign in to Google
-- After that, it will remember your authorization
+3. Generate a report and click "Save to Drive"
+4. The PDF should appear in the Drive folder without any Google sign-in prompt
 
 ## Troubleshooting
 
-**"Failed to sign in to Google Drive"**
-- Make sure you added the correct JavaScript origins in OAuth settings
-- Check browser console for detailed error messages
+**"Drive upload failed"**
+- Confirm the service account email is shared on the folder
+- Confirm the folder ID is correct
+- Ensure the Drive API is enabled in the Google Cloud project
 
-**"Google API not initialized"**
-- Wait a few seconds after page load for the API to initialize
-- Check if GOOGLE_API_KEY and GOOGLE_CLIENT_ID are correct
-
-**"Upload failed"**
-- Verify the GOOGLE_DRIVE_FOLDER_ID is correct
-- Make sure the folder is accessible (not deleted/moved)
-- Check if you have permission to write to the folder
+**"Missing GOOGLE_SERVICE_ACCOUNT_JSON"**
+- Confirm the secret is set in Supabase and redeploy the function
 
 **Files not showing in Drive**
 - Check the specific folder (not "My Drive" root)
-- Refresh Google Drive page
-- Check "Shared with me" if folder is owned by another account
+- Refresh the Drive page
+- For Shared Drives, confirm the service account is a member
 
 ## Security Notes
 
-- Don't commit the actual API keys to git (keep them in .env or similar)
-- The OAuth flow is secure - you authenticate each user individually
-- Each user needs Google account access
-- Files are uploaded to the folder you specified with the credentials of the signed-in user
+- Do not commit the service account JSON key to git
+- Limit access to the service account by sharing only the target folder
+- All uploads are performed by the service account identity

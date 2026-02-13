@@ -5,16 +5,6 @@ import "./App.css";
 import html2pdf from 'html2pdf.js';
 
 /* ===========================
-   GOOGLE DRIVE CONFIG
-   =========================== */
-
-// TODO: Replace these with your actual Google Cloud credentials
-const GOOGLE_CLIENT_ID = '753101804798-4pv1u6geld4sopu80pkam786ritibrdc.apps.googleusercontent.com';
-const GOOGLE_API_KEY = 'AIzaSyD0Zkxx3q8-eONpOHWsvFjjLupEYQu7ytI';
-const GOOGLE_DRIVE_FOLDER_ID = '1Zc04BOCmdTubDptvNvldcWBX6iegQ619';
-const SCOPES = 'https://www.googleapis.com/auth/drive';
-
-/* ===========================
    HELPERS
    =========================== */
 
@@ -175,6 +165,23 @@ function formatDateTime(value) {
   const d = new Date(value);
   if (Number.isNaN(d.getTime())) return "";
   return d.toLocaleString();
+}
+
+function blobToBase64(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      const result = reader.result;
+      if (!result || typeof result !== "string") {
+        reject(new Error("Failed to read file"));
+        return;
+      }
+      const base64 = result.split(",")[1] || "";
+      resolve(base64);
+    };
+    reader.onerror = () => reject(new Error("Failed to read file"));
+    reader.readAsDataURL(blob);
+  });
 }
 
 function readCache(key, ttlMs = CACHE_TTL_MS) {
@@ -1684,58 +1691,20 @@ function DefectsPage({ activeTab }) {
     setSelectedRecipientEmail("");
   }, [selectedDefectForReport]);
 
-  // Upload PDF to Google Drive using new Google Identity Services
-  async function uploadToGoogleDrive(pdfBlob, filename) {
-    try {
-      return new Promise((resolve, reject) => {
-        // Request access token using new Google Identity Services
-        const tokenClient = google.accounts.oauth2.initTokenClient({
-          client_id: GOOGLE_CLIENT_ID,
-          scope: SCOPES,
-          callback: async (response) => {
-            if (response.error) {
-              reject(new Error(response.error));
-              return;
-            }
+  async function uploadToDriveViaFunction(pdfBase64, filename) {
+    const { data, error } = await supabase.functions.invoke("upload-drive", {
+      body: { filename, pdfBase64 },
+    });
 
-            const accessToken = response.access_token;
-
-            // Support for Shared Drives (Team Drives)
-            const metadata = {
-              name: filename,
-              mimeType: 'application/pdf',
-              parents: [GOOGLE_DRIVE_FOLDER_ID]
-            };
-
-            const form = new FormData();
-            form.append('metadata', new Blob([JSON.stringify(metadata)], { type: 'application/json' }));
-            form.append('file', pdfBlob);
-
-            // Add supportsAllDrives=true for Shared Drive support
-            const uploadResponse = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&supportsAllDrives=true', {
-              method: 'POST',
-              headers: new Headers({ 'Authorization': 'Bearer ' + accessToken }),
-              body: form,
-            });
-
-            const result = await uploadResponse.json();
-            
-            if (uploadResponse.ok) {
-              console.log('File uploaded to Google Drive:', result);
-              resolve(result);
-            } else {
-              reject(new Error(result.error?.message || 'Upload failed'));
-            }
-          },
-        });
-
-        // Request the token (this will show Google sign-in popup)
-        tokenClient.requestAccessToken();
-      });
-    } catch (error) {
-      console.error('Error uploading to Google Drive:', error);
+    if (error) {
       throw error;
     }
+
+    if (!data?.success) {
+      throw new Error(data?.error || "Drive upload failed");
+    }
+
+    return data;
   }
 
   async function sendReportEmail(defect) {
@@ -1874,21 +1843,11 @@ function DefectsPage({ activeTab }) {
 
   async function saveToDrive(defect) {
     try {
-      // Log the Drive save activity BEFORE generating PDF so it appears in the PDF
       const { data: auth } = await supabase.auth.getUser();
       const performer = auth?.user?.email ?? "Admin Portal";
       const dateStr = new Date().toISOString().split('T')[0];
       const shortDesc = (defect.title || 'Report').substring(0, 30).replace(/[^a-zA-Z0-9]/g, '-');
       const filename = `Defect-Report-${defect.asset}-${shortDesc}-${dateStr}.pdf`;
-      
-      await supabase.from("defect_activity").insert({
-        defect_id: defect.id,
-        message: `PDF report saved to Google Drive: ${filename}`,
-        performed_by: performer
-      });
-      
-      // Reload activity to show in the PDF
-      await loadActivity(defect.id);
       
       alert("Generating PDF for Google Drive... This may take a moment.");
 
@@ -1952,8 +1911,44 @@ function DefectsPage({ activeTab }) {
       // Generate PDF from cloned element with embedded images
       const pdfBlob = await html2pdf().set(opt).from(clonedElement).outputPdf('blob');
 
+      const pdfBase64 = await blobToBase64(pdfBlob);
+
       console.log("Uploading PDF to Google Drive...");
-      await uploadToGoogleDrive(pdfBlob, filename);
+      const driveResult = await uploadToDriveViaFunction(pdfBase64, filename);
+      const driveFileId = driveResult?.id || "";
+      const driveFileUrl =
+        driveResult?.webViewLink ||
+        (driveFileId ? `https://drive.google.com/file/d/${driveFileId}/view` : "");
+
+      const { error: driveUpdateError } = await supabase
+        .from("defects")
+        .update({
+          drive_file_id: driveFileId || null,
+          drive_file_url: driveFileUrl || null,
+        })
+        .eq("id", defect.id);
+
+      if (driveUpdateError) {
+        throw driveUpdateError;
+      }
+
+      await supabase.from("defect_activity").insert({
+        defect_id: defect.id,
+        message: `PDF report saved to Google Drive: ${filename}`,
+        performed_by: performer
+      });
+
+      setDefects((prev) => {
+        const next = prev.map((row) =>
+          row.id === defect.id
+            ? { ...row, drive_file_id: driveFileId, drive_file_url: driveFileUrl }
+            : row
+        );
+        writeCache(CACHE_KEYS.defects, next);
+        return next;
+      });
+
+      await loadActivity(defect.id);
       
       alert(`Report PDF saved to Google Drive successfully!`);
     } catch (err) {
@@ -2556,6 +2551,7 @@ function DefectsPage({ activeTab }) {
                   <th>Submitted By</th>
                   <th>Submitted At</th>
                   <th>Closed Out</th>
+                  <th>Stored</th>
                 </tr>
               </thead>
               <tbody>
@@ -2564,6 +2560,12 @@ function DefectsPage({ activeTab }) {
                   const isExpanded = expandedIds.includes(d.id);
                   const edit = editState[d.id] || {};
                   const logs = activityLogs[d.id];
+                  const driveFileUrl = d.drive_file_url || (
+                    d.drive_file_id
+                      ? `https://drive.google.com/file/d/${d.drive_file_id}/view`
+                      : ""
+                  );
+                  const driveSaved = Boolean(driveFileUrl);
 
                   return (
                     <React.Fragment key={d.id}>
@@ -2590,12 +2592,42 @@ function DefectsPage({ activeTab }) {
                         <td>{d.submitted_by}</td>
                         <td>{formatDateTime(d.created_at)}</td>
                         <td>{d.closed_out ? formatDateTime(d.closed_out) : "—"}</td>
+                        <td>
+                          <button
+                            type="button"
+                            className={
+                              "drive-badge " +
+                              (driveSaved
+                                ? "drive-badge--active"
+                                : "drive-badge--inactive")
+                            }
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              if (!driveSaved) {
+                                return;
+                              }
+                              window.open(
+                                driveFileUrl,
+                                "_blank",
+                                "noopener,noreferrer"
+                              );
+                            }}
+                            aria-disabled={!driveSaved}
+                            title={
+                              driveSaved
+                                ? "Open Drive report"
+                                : "Report not stored in Drive yet"
+                            }
+                          >
+                            Drive
+                          </button>
+                        </td>
                       </tr>
 
                       {/* DETAILS ROW */}
                       {isExpanded && (
                         <tr className="details-row">
-                          <td colSpan={8}>
+                          <td colSpan={9}>
                             <div className="details-panel">
                               <div className="details-header">
                                 <div>
