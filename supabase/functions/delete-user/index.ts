@@ -34,6 +34,13 @@ serve(async (req) => {
 
     if (roleError) throw roleError
 
+    const { error: divisionError } = await supabase
+      .from('user_divisions')
+      .delete()
+      .eq('user_id', userId)
+
+    if (divisionError) throw divisionError
+
     const { error: deleteError } = await supabase.auth.admin.deleteUser(userId)
     if (deleteError) throw deleteError
 

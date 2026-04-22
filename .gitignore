@@ -22,3 +22,7 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Supabase local CLI artifacts
+supabase/.temp/
+supabase/.branches/

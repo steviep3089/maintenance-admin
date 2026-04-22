@@ -20,7 +20,11 @@ const CACHE_KEYS = {
   userRoles: "maintenance-admin.userRoles.v1",
   adminUsers: "maintenance-admin.adminUsers.v1",
   defects: "maintenance-admin.defects.v1",
+  divisions: "maintenance-admin.divisions.v1",
+  plantAssets: "maintenance-admin.plantAssets.v1",
 };
+
+const DEFAULT_DIVISIONS = ["Sitebatch", "South", "Midlands", "North"];
 
 function addResumeListeners(onResume, onSuspend) {
   let lastRunAt = 0;
@@ -165,6 +169,182 @@ function formatDateTime(value) {
   const d = new Date(value);
   if (Number.isNaN(d.getTime())) return "";
   return d.toLocaleString();
+}
+
+const DIVISION_BADGE_STYLES = {
+  sitebatch: {
+    backgroundColor: "#e0f2fe",
+    color: "#0c4a6e",
+    border: "1px solid #7dd3fc",
+  },
+  south: {
+    backgroundColor: "#ecfdf5",
+    color: "#065f46",
+    border: "1px solid #6ee7b7",
+  },
+  midlands: {
+    backgroundColor: "#fef3c7",
+    color: "#92400e",
+    border: "1px solid #fcd34d",
+  },
+  north: {
+    backgroundColor: "#ede9fe",
+    color: "#5b21b6",
+    border: "1px solid #c4b5fd",
+  },
+};
+
+const DIVISION_BADGE_FALLBACK_PALETTE = [
+  { backgroundColor: "#ffe4e6", color: "#9f1239", border: "1px solid #fda4af" },
+  { backgroundColor: "#fef9c3", color: "#854d0e", border: "1px solid #fde047" },
+  { backgroundColor: "#dcfce7", color: "#166534", border: "1px solid #86efac" },
+  { backgroundColor: "#e0e7ff", color: "#3730a3", border: "1px solid #a5b4fc" },
+  { backgroundColor: "#fae8ff", color: "#86198f", border: "1px solid #e879f9" },
+  { backgroundColor: "#fef2f2", color: "#991b1b", border: "1px solid #fca5a5" },
+];
+
+function getDivisionBadgeStyle(divisionName) {
+  const normalized = (divisionName || "").trim().toLowerCase();
+  if (DIVISION_BADGE_STYLES[normalized]) {
+    return DIVISION_BADGE_STYLES[normalized];
+  }
+
+  let hash = 0;
+  for (let i = 0; i < normalized.length; i += 1) {
+    hash = (hash * 31 + normalized.charCodeAt(i)) >>> 0;
+  }
+  const idx = hash % DIVISION_BADGE_FALLBACK_PALETTE.length;
+  return DIVISION_BADGE_FALLBACK_PALETTE[idx];
+}
+
+function arraysOverlap(a, b) {
+  if (!Array.isArray(a) || !Array.isArray(b) || a.length === 0 || b.length === 0) {
+    return false;
+  }
+  const bSet = new Set(b);
+  return a.some((item) => bSet.has(item));
+}
+
+async function loadDivisionScopeForUser(userId) {
+  if (!userId) {
+    return {
+      divisionIds: [],
+      visibleAssetCodes: [],
+      assetDivisionIdsByCode: {},
+    };
+  }
+
+  const { data: userDivisionRows, error: userDivisionError } = await withAuthRetry(() =>
+    supabase
+      .from("user_divisions")
+      .select("division_id")
+      .eq("user_id", userId)
+  );
+
+  if (userDivisionError) {
+    throw userDivisionError;
+  }
+
+  const divisionIds = Array.from(
+    new Set((userDivisionRows || []).map((row) => row.division_id).filter(Boolean))
+  );
+
+  if (divisionIds.length === 0) {
+    return {
+      divisionIds,
+      visibleAssetCodes: [],
+      assetDivisionIdsByCode: {},
+    };
+  }
+
+  const visibleAssetCodesSet = new Set();
+  const assetDivisionIdsByCode = {};
+
+  const { data: assetDivisionRows, error: assetDivisionError } = await withAuthRetry(() =>
+    supabase
+      .from("plant_asset_divisions")
+      .select("division_id, plant_assets(asset_code)")
+      .in("division_id", divisionIds)
+  );
+
+  if (!assetDivisionError) {
+    (assetDivisionRows || []).forEach((row) => {
+      const assetCode = row?.plant_assets?.asset_code;
+      const divisionId = row?.division_id;
+      if (!assetCode || !divisionId) {
+        return;
+      }
+      visibleAssetCodesSet.add(assetCode);
+      if (!assetDivisionIdsByCode[assetCode]) {
+        assetDivisionIdsByCode[assetCode] = [];
+      }
+      if (!assetDivisionIdsByCode[assetCode].includes(divisionId)) {
+        assetDivisionIdsByCode[assetCode].push(divisionId);
+      }
+    });
+  } else {
+    const { data: legacyAssetRows, error: legacyAssetError } = await withAuthRetry(() =>
+      supabase
+        .from("plant_assets")
+        .select("asset_code, division_id")
+        .in("division_id", divisionIds)
+        .eq("is_active", true)
+    );
+
+    if (legacyAssetError) {
+      throw legacyAssetError;
+    }
+
+    (legacyAssetRows || []).forEach((row) => {
+      const assetCode = row?.asset_code;
+      const divisionId = row?.division_id;
+      if (!assetCode || !divisionId) {
+        return;
+      }
+      visibleAssetCodesSet.add(assetCode);
+      if (!assetDivisionIdsByCode[assetCode]) {
+        assetDivisionIdsByCode[assetCode] = [];
+      }
+      if (!assetDivisionIdsByCode[assetCode].includes(divisionId)) {
+        assetDivisionIdsByCode[assetCode].push(divisionId);
+      }
+    });
+  }
+
+  return {
+    divisionIds,
+    visibleAssetCodes: Array.from(visibleAssetCodesSet),
+    assetDivisionIdsByCode,
+  };
+}
+
+function canViewDefectWithScope(defect, scope) {
+  if (!defect || !scope) {
+    return false;
+  }
+
+  const divisionIds = scope.divisionIds || [];
+  const visibleAssetCodes = scope.visibleAssetCodes || [];
+
+  const hasDivisionAccess =
+    !!defect.division_id && Array.isArray(divisionIds) && divisionIds.includes(defect.division_id);
+  const hasAssetAccess =
+    !!defect.asset && Array.isArray(visibleAssetCodes) && visibleAssetCodes.includes(defect.asset);
+
+  return hasDivisionAccess || hasAssetAccess;
+}
+
+function getDefectDivisionIdsForScope(defect, scope) {
+  if (!defect || !scope) {
+    return [];
+  }
+
+  if (defect.division_id) {
+    return [defect.division_id];
+  }
+
+  const fromAsset = scope.assetDivisionIdsByCode?.[defect.asset];
+  return Array.isArray(fromAsset) ? fromAsset : [];
 }
 
 function blobToBase64(blob) {
@@ -671,6 +851,12 @@ function ActionTaskPage({ activeTab }) {
   const [defects, setDefects] = useState([]);
   const [users, setUsers] = useState([]);
   const [filteredUsers, setFilteredUsers] = useState([]);
+  const [scope, setScope] = useState({
+    divisionIds: [],
+    visibleAssetCodes: [],
+    assetDivisionIdsByCode: {},
+  });
+  const [userDivisionIdsByUserId, setUserDivisionIdsByUserId] = useState({});
   const [userSearchText, setUserSearchText] = useState("");
   const [selectedDefectId, setSelectedDefectId] = useState("");
   const [selectedUserId, setSelectedUserId] = useState("");
@@ -684,6 +870,18 @@ function ActionTaskPage({ activeTab }) {
   const loadingDefectsRef = useRef(false);
   const usersRequestIdRef = useRef(0);
   const usersTimeoutRef = useRef(null);
+
+  const openDefects = defects.filter(
+    (defect) => (defect.status || "Reported") !== "Completed"
+  );
+
+  useEffect(() => {
+    if (selectedDefectId && !openDefects.some((defect) => defect.id === selectedDefectId)) {
+      setSelectedDefectId("");
+      setSelectedUserId("");
+    }
+  }, [selectedDefectId, openDefects]);
+
   useEffect(() => {
     if (activeTab !== "tasks") {
       return;
@@ -691,9 +889,11 @@ function ActionTaskPage({ activeTab }) {
 
     const cleanup = addResumeListeners(
       () => {
-        void resumeSessionIfNeeded();
-        loadDefects();
-        loadUsers();
+        void (async () => {
+          await resumeSessionIfNeeded();
+          const nextScope = await loadAccessScope();
+          await Promise.all([loadDefects(nextScope), loadUsers()]);
+        })();
       },
       () => {
         usersRequestIdRef.current += 1;
@@ -706,26 +906,111 @@ function ActionTaskPage({ activeTab }) {
   }, [activeTab]);
 
   useEffect(() => {
-    // Filter users based on search text
-    if (!userSearchText.trim()) {
-      setFilteredUsers(users);
-    } else {
-      const search = userSearchText.toLowerCase();
-      setFilteredUsers(users.filter(u => u.email.toLowerCase().includes(search)));
-    }
-  }, [userSearchText, users]);
+    const selectedDefect = defects.find((defect) => defect.id === selectedDefectId);
+    const selectedDefectDivisionIds = selectedDefect
+      ? getDefectDivisionIdsForScope(selectedDefect, scope)
+      : [];
 
-  async function loadDefects() {
+    let nextUsers = users;
+    if (selectedDefect) {
+      if (selectedDefectDivisionIds.length === 0) {
+        nextUsers = [];
+      } else {
+        nextUsers = users.filter((user) =>
+          arraysOverlap(userDivisionIdsByUserId[user.id] || [], selectedDefectDivisionIds)
+        );
+      }
+    }
+
+    if (userSearchText.trim()) {
+      const search = userSearchText.toLowerCase();
+      nextUsers = nextUsers.filter((user) =>
+        (user.email || "").toLowerCase().includes(search)
+      );
+    }
+
+    if (selectedUserId && !nextUsers.some((user) => user.id === selectedUserId)) {
+      setSelectedUserId("");
+    }
+
+    setFilteredUsers(nextUsers);
+  }, [
+    userSearchText,
+    users,
+    selectedDefectId,
+    selectedUserId,
+    defects,
+    scope,
+    userDivisionIdsByUserId,
+  ]);
+
+  async function loadAccessScope() {
+    const {
+      data: { user },
+      error: userError,
+    } = await supabase.auth.getUser();
+
+    if (userError) {
+      throw userError;
+    }
+
+    const nextScope = await loadDivisionScopeForUser(user?.id);
+    setScope(nextScope);
+    return nextScope;
+  }
+
+  async function loadDefects(scopeOverride = null) {
     if (loadingDefectsRef.current) {
       return;
     }
     loadingDefectsRef.current = true;
     try {
-      const { data, error } = await withAuthRetry(() =>
+      const activeScope = scopeOverride || scope;
+      const divisionIds = activeScope.divisionIds || [];
+      const visibleAssetCodes = activeScope.visibleAssetCodes || [];
+
+      if (divisionIds.length === 0 && visibleAssetCodes.length === 0) {
+        setDefects([]);
+        setLastDefectsSync(Date.now());
+        return;
+      }
+
+      const makeBaseQuery = () =>
         supabase
           .from("defects")
           .select("*")
-          .order("created_at", { ascending: false })
+          .order("created_at", { ascending: false });
+
+      const fetchByDivision = async () => {
+        if (divisionIds.length === 0) {
+          return { data: [], error: null };
+        }
+        return withAuthRetry(() => makeBaseQuery().in("division_id", divisionIds));
+      };
+
+      const fetchByAsset = async () => {
+        if (visibleAssetCodes.length === 0) {
+          return { data: [], error: null };
+        }
+        return withAuthRetry(() => makeBaseQuery().in("asset", visibleAssetCodes));
+      };
+
+      const [divisionResult, assetResult] = await Promise.all([
+        fetchByDivision(),
+        fetchByAsset(),
+      ]);
+
+      const error = divisionResult.error || assetResult.error;
+      const mergedMap = new Map();
+
+      [...(divisionResult.data || []), ...(assetResult.data || [])].forEach((defect) => {
+        if (defect?.id) {
+          mergedMap.set(defect.id, defect);
+        }
+      });
+
+      const data = Array.from(mergedMap.values()).sort(
+        (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
       );
 
       if (error) throw error;
@@ -774,8 +1059,32 @@ function ActionTaskPage({ activeTab }) {
 
       const allUsers = data.users || [];
 
+      const userIds = allUsers.map((user) => user.id).filter(Boolean);
+      const userDivisionMap = {};
+
+      if (userIds.length > 0) {
+        const { data: userDivisionRows, error: userDivisionError } = await withAuthRetry(() =>
+          supabase
+            .from("user_divisions")
+            .select("user_id, division_id")
+            .in("user_id", userIds)
+        );
+
+        if (userDivisionError) {
+          throw userDivisionError;
+        }
+
+        (userDivisionRows || []).forEach((row) => {
+          if (!userDivisionMap[row.user_id]) {
+            userDivisionMap[row.user_id] = [];
+          }
+          userDivisionMap[row.user_id].push(row.division_id);
+        });
+      }
+
       setUsers(allUsers);
       setFilteredUsers(allUsers);
+      setUserDivisionIdsByUserId(userDivisionMap);
       setUsersStale(false);
       setLastUsersSync(Date.now());
       writeCache(CACHE_KEYS.users, allUsers);
@@ -815,7 +1124,7 @@ function ActionTaskPage({ activeTab }) {
       console.log("Available users:", users.map(u => u.email));
 
       const selectedDefect = defects.find(d => d.id === selectedDefectId);
-      const selectedUser = users.find(u => u.email === selectedUserId);
+      const selectedUser = users.find(u => u.id === selectedUserId);
       
       console.log("Found defect:", selectedDefect);
       console.log("Found user:", selectedUser);
@@ -826,6 +1135,19 @@ function ActionTaskPage({ activeTab }) {
       
       if (!selectedUser) {
         throw new Error("User not found. Please refresh and try again.");
+      }
+
+      if ((selectedDefect.status || "Reported") === "Completed") {
+        throw new Error("Completed defects cannot be assigned.");
+      }
+
+      const selectedDefectDivisionIds = getDefectDivisionIdsForScope(selectedDefect, scope);
+      const selectedUserDivisionIds = userDivisionIdsByUserId[selectedUser.id] || [];
+      if (
+        selectedDefectDivisionIds.length === 0 ||
+        !arraysOverlap(selectedDefectDivisionIds, selectedUserDivisionIds)
+      ) {
+        throw new Error("Selected user is not assigned to this defect region.");
       }
 
       // Log task assignment in defect_activity
@@ -919,7 +1241,7 @@ function ActionTaskPage({ activeTab }) {
           }}
         >
           <option value="">-- Choose a defect --</option>
-          {defects.map((defect) => (
+          {openDefects.map((defect) => (
             <option key={defect.id} value={defect.id}>
               {defect.asset} - {defect.title} ({defect.status})
             </option>
@@ -974,7 +1296,7 @@ function ActionTaskPage({ activeTab }) {
         >
           <option value="">-- Choose a user --</option>
           {filteredUsers.map((user) => (
-            <option key={user.id} value={user.email}>
+            <option key={user.id} value={user.id}>
               {user.email}
             </option>
           ))}
@@ -1043,6 +1365,10 @@ function ActionTaskPage({ activeTab }) {
 function UserManagementPage() {
   const [newUserEmail, setNewUserEmail] = useState("");
   const [newUserRole, setNewUserRole] = useState("user");
+  const [availableDivisions, setAvailableDivisions] = useState(DEFAULT_DIVISIONS);
+  const [selectedDivisions, setSelectedDivisions] = useState(["Sitebatch"]);
+  const [includeOtherDivision, setIncludeOtherDivision] = useState(false);
+  const [otherDivisionName, setOtherDivisionName] = useState("");
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState("");
   
@@ -1053,6 +1379,13 @@ function UserManagementPage() {
   const [userLoadError, setUserLoadError] = useState("");
   const [searchText, setSearchText] = useState("");
   const [deletingUserId, setDeletingUserId] = useState(null);
+  const [resendingInviteUserId, setResendingInviteUserId] = useState(null);
+  const [invitingContractsUserId, setInvitingContractsUserId] = useState(null);
+  const [editingUserId, setEditingUserId] = useState(null);
+  const [editSelectedDivisions, setEditSelectedDivisions] = useState([]);
+  const [editIncludeOtherDivision, setEditIncludeOtherDivision] = useState(false);
+  const [editOtherDivisionName, setEditOtherDivisionName] = useState("");
+  const [savingUserDivisionsId, setSavingUserDivisionsId] = useState(null);
   const [lastUsersSync, setLastUsersSync] = useState(null);
   const loadingUsersRef = useRef(false);
   const usersRequestIdRef = useRef(0);
@@ -1065,6 +1398,224 @@ function UserManagementPage() {
     ? "http://localhost:5173"
     : window.location.origin;
   const inviteRedirectTo = `${adminRedirectBase}/reset?from=invite`;
+
+  async function loadAvailableDivisions({ force = false } = {}) {
+    try {
+      if (!force) {
+        const cachedDivisions = readCache(CACHE_KEYS.divisions);
+        if (cachedDivisions && cachedDivisions.length > 0) {
+          setAvailableDivisions(cachedDivisions);
+        }
+      }
+
+      const { data, error } = await withAuthRetry(() =>
+        supabase
+          .from("divisions")
+          .select("name")
+          .order("name", { ascending: true })
+      );
+
+      if (error) {
+        throw error;
+      }
+
+      const dbDivisionNames = (data || [])
+        .map((row) => (row.name || "").trim())
+        .filter((name) => name.length > 0);
+
+      const merged = Array.from(
+        new Set([...DEFAULT_DIVISIONS, ...dbDivisionNames])
+      ).sort((a, b) => a.localeCompare(b));
+
+      setAvailableDivisions(merged);
+      writeCache(CACHE_KEYS.divisions, merged);
+    } catch (err) {
+      console.warn("Could not load divisions, using defaults:", err?.message || err);
+      setAvailableDivisions((prev) =>
+        prev && prev.length > 0
+          ? prev
+          : DEFAULT_DIVISIONS
+      );
+    }
+  }
+
+  function toggleDivision(divisionName) {
+    setSelectedDivisions((prev) => {
+      if (prev.includes(divisionName)) {
+        return prev.filter((name) => name !== divisionName);
+      }
+      return [...prev, divisionName];
+    });
+  }
+
+  function toggleEditDivision(divisionName) {
+    setEditSelectedDivisions((prev) => {
+      if (prev.includes(divisionName)) {
+        return prev.filter((name) => name !== divisionName);
+      }
+      return [...prev, divisionName];
+    });
+  }
+
+  function startEditUserDivisions(user) {
+    const divisions = Array.isArray(user?.divisions) ? user.divisions : [];
+    setEditingUserId(user.id);
+    setEditSelectedDivisions(divisions);
+    setEditIncludeOtherDivision(false);
+    setEditOtherDivisionName("");
+    setMessage("");
+  }
+
+  function cancelEditUserDivisions() {
+    setEditingUserId(null);
+    setEditSelectedDivisions([]);
+    setEditIncludeOtherDivision(false);
+    setEditOtherDivisionName("");
+  }
+
+  async function resolveDivisionIdsByNames(divisionNames) {
+    const normalizedDivisionNames = Array.from(
+      new Set(
+        (divisionNames || [])
+          .map((name) => (name || "").trim())
+          .filter((name) => name.length > 0)
+      )
+    );
+
+    if (normalizedDivisionNames.length === 0) {
+      return [];
+    }
+
+    const { data: existingRows, error: existingError } = await withAuthRetry(() =>
+      supabase.from("divisions").select("id, name")
+    );
+
+    if (existingError) {
+      throw existingError;
+    }
+
+    const existingByLowerName = new Map(
+      (existingRows || []).map((row) => [String(row.name).toLowerCase(), row])
+    );
+
+    const divisionIds = [];
+
+    for (const divisionName of normalizedDivisionNames) {
+      const key = divisionName.toLowerCase();
+      const existing = existingByLowerName.get(key);
+      if (existing?.id) {
+        divisionIds.push(existing.id);
+        continue;
+      }
+
+      const { data: inserted, error: insertError } = await withAuthRetry(() =>
+        supabase
+          .from("divisions")
+          .insert({ name: divisionName })
+          .select("id, name")
+          .single()
+      );
+
+      if (insertError) {
+        throw insertError;
+      }
+
+      if (inserted?.id) {
+        existingByLowerName.set(key, inserted);
+        divisionIds.push(inserted.id);
+      }
+    }
+
+    return divisionIds;
+  }
+
+  async function saveUserDivisions(user) {
+    if (!user?.id) {
+      return;
+    }
+
+    setSavingUserDivisionsId(user.id);
+    setMessage("");
+
+    try {
+      const trimmedOther = editOtherDivisionName.trim();
+      const selectedNames = editSelectedDivisions
+        .map((name) => name.trim())
+        .filter((name) => name.length > 0);
+      const combinedNames = editIncludeOtherDivision && trimmedOther
+        ? [...selectedNames, trimmedOther]
+        : selectedNames;
+
+      if (combinedNames.length === 0) {
+        throw new Error("Select at least one division or enter an Other division.");
+      }
+
+      if (editIncludeOtherDivision && !trimmedOther) {
+        throw new Error("Please enter a name for Other division.");
+      }
+
+      const divisionIds = await resolveDivisionIdsByNames(combinedNames);
+
+      const { error: deleteError } = await withAuthRetry(() =>
+        supabase
+          .from("user_divisions")
+          .delete()
+          .eq("user_id", user.id)
+      );
+
+      if (deleteError) {
+        throw deleteError;
+      }
+
+      const { error: insertError } = await withAuthRetry(() =>
+        supabase
+          .from("user_divisions")
+          .insert(
+            divisionIds.map((divisionId) => ({
+              user_id: user.id,
+              division_id: divisionId,
+            }))
+          )
+      );
+
+      if (insertError) {
+        throw insertError;
+      }
+
+      let contractsSyncWarning = "";
+      if (user?.contracts_linked && user?.email) {
+        const authority = userRoles[user.id] === "admin" ? "admin" : "user";
+        const { data: syncData, error: syncError } = await withAuthRetry(() =>
+          supabase.functions.invoke("invite-contracts-portal", {
+            body: {
+              email: user.email,
+              displayName: user.email,
+              authority,
+              regions: combinedNames,
+            },
+          })
+        );
+
+        if (syncError) {
+          contractsSyncWarning = ` Contracts sync failed: ${syncError.message}`;
+        } else if (!syncData?.success) {
+          const warningText = Array.isArray(syncData?.warnings) && syncData.warnings.length
+            ? syncData.warnings.join(" | ")
+            : syncData?.error || "unknown sync error";
+          contractsSyncWarning = ` Contracts sync failed: ${warningText}`;
+        }
+      }
+
+      setMessage(`Updated divisions for ${user.email}.${contractsSyncWarning}`);
+      cancelEditUserDivisions();
+      await loadAvailableDivisions({ force: true });
+      await loadAllUsers({ force: true });
+    } catch (err) {
+      setMessage(`Error updating divisions: ${err.message}`);
+    } finally {
+      setSavingUserDivisionsId(null);
+    }
+  }
 
   async function loadAllUsers({ force = false } = {}) {
     if (loadingUsersRef.current && !force) {
@@ -1137,6 +1688,7 @@ function UserManagementPage() {
     const cleanup = addResumeListeners(
       () => {
         void resumeSessionIfNeeded();
+        loadAvailableDivisions({ force: true });
         loadAllUsers({ force: true });
       },
       () => {
@@ -1185,6 +1737,19 @@ function UserManagementPage() {
     setMessage("");
 
     try {
+      const trimmedOtherDivision = otherDivisionName.trim();
+      const divisionNames = selectedDivisions
+        .map((name) => name.trim())
+        .filter((name) => name.length > 0);
+
+      if (divisionNames.length === 0 && !trimmedOtherDivision) {
+        throw new Error("Select at least one division or enter an Other division.");
+      }
+
+      if (includeOtherDivision && !trimmedOtherDivision) {
+        throw new Error("Please enter a name for Other division.");
+      }
+
       // Call Supabase Edge Function to create user with proper permissions
       const redirectTo = inviteRedirectTo;
       const { data, error } = await supabase.functions.invoke("create-user", {
@@ -1192,6 +1757,8 @@ function UserManagementPage() {
           email: newUserEmail,
           role: newUserRole,
           redirectTo,
+          divisions: divisionNames,
+          otherDivisionName: includeOtherDivision ? trimmedOtherDivision : "",
         },
       });
 
@@ -1208,11 +1775,98 @@ function UserManagementPage() {
       setTimeout(() => setMessage(""), 3000);
       setNewUserEmail("");
       setNewUserRole("user");
+      setSelectedDivisions(["Sitebatch"]);
+      setIncludeOtherDivision(false);
+      setOtherDivisionName("");
+      await loadAvailableDivisions({ force: true });
     } catch (err) {
       console.error('Create user error:', err);
       setMessage(`Error: ${err.message}`);
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function resendInvite(user) {
+    if (!user?.id) {
+      return;
+    }
+
+    setResendingInviteUserId(user.id);
+    setMessage("");
+
+    try {
+      const { data, error } = await withAuthRetry(() =>
+        supabase.functions.invoke("resend-invite", {
+          body: {
+            userId: user.id,
+            redirectTo: inviteRedirectTo,
+          },
+        })
+      );
+
+      if (error) {
+        throw error;
+      }
+
+      if (!data?.success) {
+        throw new Error(data?.error || "Failed to resend invite");
+      }
+
+      setMessage(`Invite re-sent to ${user.email}.`);
+      await loadAllUsers({ force: true });
+    } catch (err) {
+      setMessage(`Error re-sending invite: ${err.message}`);
+    } finally {
+      setResendingInviteUserId(null);
+    }
+  }
+
+  async function inviteToContractsPortal(user) {
+    if (!user?.email) {
+      setMessage("Invite to contracts failed: missing user email.");
+      return;
+    }
+
+    setInvitingContractsUserId(user.id);
+    setMessage("");
+
+    try {
+      const authority = userRoles[user.id] === "admin" ? "admin" : "user";
+      const { data, error } = await withAuthRetry(() =>
+        supabase.functions.invoke("invite-contracts-portal", {
+          body: {
+            email: user.email,
+            displayName: user.email,
+            authority,
+            regions: Array.isArray(user.divisions) ? user.divisions : [],
+          },
+        })
+      );
+
+      if (error) {
+        throw error;
+      }
+
+      if (!data?.success) {
+        throw new Error(data?.error || "Failed to invite user to contracts portal");
+      }
+
+      const warnings = Array.isArray(data?.warnings) && data.warnings.length
+        ? ` Warnings: ${data.warnings.join(" | ")}`
+        : "";
+
+      setMessage(
+        data?.alreadyLinked
+          ? `User already linked in contracts portal: ${user.email}.${warnings}`
+          : `Contracts portal invite sent to ${user.email}.${warnings}`
+      );
+
+      await loadAllUsers({ force: true });
+    } catch (err) {
+      setMessage(`Error inviting to contracts portal: ${err.message}`);
+    } finally {
+      setInvitingContractsUserId(null);
     }
   }
 
@@ -1272,6 +1926,60 @@ function UserManagementPage() {
               <option value="user">User (Mobile App Only)</option>
               <option value="admin">Admin (Full Access)</option>
             </select>
+          </div>
+
+          <div style={{ marginBottom: 25 }}>
+            <label style={{ display: "block", marginBottom: 8, fontWeight: 600 }}>
+              Divisions
+            </label>
+            <div
+              style={{
+                border: "1px solid #e5e7eb",
+                borderRadius: 8,
+                padding: 12,
+                display: "grid",
+                gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+                gap: 8,
+              }}
+            >
+              {availableDivisions.map((divisionName) => (
+                <label
+                  key={divisionName}
+                  style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 14 }}
+                >
+                  <input
+                    type="checkbox"
+                    checked={selectedDivisions.includes(divisionName)}
+                    onChange={() => toggleDivision(divisionName)}
+                  />
+                  <span>{divisionName}</span>
+                </label>
+              ))}
+              <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 14 }}>
+                <input
+                  type="checkbox"
+                  checked={includeOtherDivision}
+                  onChange={(e) => setIncludeOtherDivision(e.target.checked)}
+                />
+                <span>Other</span>
+              </label>
+            </div>
+            {includeOtherDivision && (
+              <input
+                type="text"
+                value={otherDivisionName}
+                onChange={(e) => setOtherDivisionName(e.target.value)}
+                placeholder="Enter new division name"
+                style={{
+                  width: "100%",
+                  marginTop: 10,
+                  padding: 10,
+                  borderRadius: 6,
+                  border: "1px solid #ddd",
+                  fontSize: 14,
+                }}
+              />
+            )}
           </div>
 
           <div
@@ -1443,11 +2151,56 @@ function UserManagementPage() {
                   }}>
                     {filteredUsers.map((user, index) => {
                       const role = userRoles[user.id] || "user";
+                      const status = user.status || "pending_setup";
+                      const divisions = Array.isArray(user.divisions)
+                        ? user.divisions
+                        : [];
+                      const statusLabel =
+                        status === "live"
+                          ? "LIVE"
+                          : status === "inactive"
+                            ? "INACTIVE"
+                          : status === "invite_expired"
+                            ? "INVITE EXPIRED"
+                            : "PENDING SETUP";
+                      const statusColors =
+                        status === "live"
+                          ? { background: "#dcfce7", color: "#166534" }
+                          : status === "inactive"
+                            ? { background: "#e5e7eb", color: "#374151" }
+                          : status === "invite_expired"
+                            ? { background: "#fee2e2", color: "#991b1b" }
+                            : { background: "#fff7ed", color: "#9a3412" };
+                      const statusInfo =
+                        status === "live"
+                          ? (user.last_sign_in_at
+                              ? `Last sign in: ${formatDateTime(user.last_sign_in_at)}`
+                              : "Password set")
+                          : status === "inactive"
+                            ? (user.inactive_marked_at
+                                ? `Deactivated: ${formatDateTime(user.inactive_marked_at)}`
+                                : "Deactivated for inactivity")
+                          : status === "invite_expired"
+                            ? (user.invite_expires_at
+                                ? `Invite expired: ${formatDateTime(user.invite_expires_at)}`
+                                : "Invite expired")
+                            : (user.invite_expires_at
+                                ? `Invite expires: ${formatDateTime(user.invite_expires_at)}`
+                                : "Awaiting password setup");
                       const canDelete = role !== "admin" && role !== "manager";
                       const isDeleting = deletingUserId === user.id;
+                      const isResending = resendingInviteUserId === user.id;
+                      const isInvitingContracts = invitingContractsUserId === user.id;
+                      const isEditing = editingUserId === user.id;
+                      const isSavingDivisions = savingUserDivisionsId === user.id;
+                      const canResendInvite = status === "pending_setup" || status === "invite_expired";
+                      const contractsLookupConfigured = user.contracts_lookup_configured !== false;
+                      const contractsLinked = !!user.contracts_linked;
+                      const contractsPendingSetup = !!user.contracts_pending_setup;
+                      const canInviteContracts = contractsLookupConfigured && !!user.email && !contractsLinked;
                       return (
+                        <React.Fragment key={user.id}>
                         <div
-                          key={user.id}
                           style={{
                             padding: "12px 16px",
                             borderBottom: index < filteredUsers.length - 1 ? "1px solid #e5e7eb" : "none",
@@ -1457,8 +2210,51 @@ function UserManagementPage() {
                             backgroundColor: index % 2 === 0 ? "#fff" : "#f9fafb"
                           }}
                         >
-                          <span style={{ fontSize: 14, color: "#111827" }}>{user.email}</span>
+                          <div>
+                            <div style={{ fontSize: 14, color: "#111827" }}>{user.email}</div>
+                            <div style={{ marginTop: 4, fontSize: 12, color: "#6b7280" }}>Divisions:</div>
+                            <div style={{ marginTop: 4, display: "flex", flexWrap: "wrap", gap: 6 }}>
+                              {divisions.length > 0 ? (
+                                divisions.map((divisionName) => {
+                                  const badgeStyle = getDivisionBadgeStyle(divisionName);
+                                  return (
+                                    <span
+                                      key={`${user.id}-${divisionName}`}
+                                      style={{
+                                        fontSize: 11,
+                                        fontWeight: 600,
+                                        padding: "2px 8px",
+                                        borderRadius: 999,
+                                        backgroundColor: badgeStyle.backgroundColor,
+                                        color: badgeStyle.color,
+                                        border: badgeStyle.border,
+                                      }}
+                                    >
+                                      {divisionName}
+                                    </span>
+                                  );
+                                })
+                              ) : (
+                                <span style={{ fontSize: 12, color: "#6b7280" }}>None assigned</span>
+                              )}
+                            </div>
+                            <div style={{ marginTop: 2, fontSize: 12, color: "#6b7280" }}>
+                              {statusInfo}
+                            </div>
+                          </div>
                           <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                            <span
+                              style={{
+                                fontSize: 12,
+                                fontWeight: 700,
+                                padding: "4px 10px",
+                                borderRadius: 12,
+                                backgroundColor: statusColors.background,
+                                color: statusColors.color,
+                              }}
+                            >
+                              {statusLabel}
+                            </span>
                             <span
                               style={{
                                 fontSize: 12,
@@ -1471,6 +2267,110 @@ function UserManagementPage() {
                             >
                               {role.toUpperCase()}
                             </span>
+                            <span
+                              style={{
+                                fontSize: 11,
+                                fontWeight: 700,
+                                padding: "4px 10px",
+                                borderRadius: 12,
+                                backgroundColor: !contractsLookupConfigured
+                                  ? "#e5e7eb"
+                                  : contractsPendingSetup
+                                    ? "#fef3c7"
+                                    : contractsLinked
+                                    ? "#dcfce7"
+                                    : "#fef3c7",
+                                color: !contractsLookupConfigured
+                                  ? "#374151"
+                                  : contractsPendingSetup
+                                    ? "#92400e"
+                                    : contractsLinked
+                                    ? "#166534"
+                                    : "#92400e",
+                              }}
+                            >
+                              {!contractsLookupConfigured
+                                ? "CONTRACTS OFF"
+                                : contractsPendingSetup
+                                  ? "CONTRACTS PENDING"
+                                  : contractsLinked
+                                  ? "CONTRACTS LINKED"
+                                  : "NOT LINKED"}
+                            </span>
+                            {canResendInvite && (
+                              <button
+                                onClick={() => resendInvite(user)}
+                                disabled={isResending}
+                                style={{
+                                  border: "none",
+                                  background: "#f59e0b",
+                                  color: "#fff",
+                                  borderRadius: 6,
+                                  padding: "4px 8px",
+                                  cursor: isResending ? "not-allowed" : "pointer",
+                                  fontSize: 12,
+                                  fontWeight: 600,
+                                }}
+                              >
+                                {isResending ? "Sending..." : "Resend Invite"}
+                              </button>
+                            )}
+                            {canInviteContracts && (
+                              <button
+                                onClick={() => inviteToContractsPortal(user)}
+                                disabled={isInvitingContracts}
+                                style={{
+                                  border: "none",
+                                  background: "#2563eb",
+                                  color: "#fff",
+                                  borderRadius: 6,
+                                  padding: "4px 8px",
+                                  cursor: isInvitingContracts ? "not-allowed" : "pointer",
+                                  fontSize: 12,
+                                  fontWeight: 600,
+                                }}
+                              >
+                                {isInvitingContracts ? "Inviting..." : "Invite to Contracts"}
+                              </button>
+                            )}
+                            <button
+                              onClick={() =>
+                                isEditing
+                                  ? cancelEditUserDivisions()
+                                  : startEditUserDivisions(user)
+                              }
+                              disabled={isSavingDivisions}
+                              style={{
+                                border: "1px solid #2563eb",
+                                background: "#fff",
+                                color: "#2563eb",
+                                borderRadius: 6,
+                                padding: "4px 8px",
+                                cursor: isSavingDivisions ? "not-allowed" : "pointer",
+                                fontSize: 12,
+                                fontWeight: 600,
+                              }}
+                            >
+                              {isEditing ? "Cancel" : "Edit"}
+                            </button>
+                            {isEditing && (
+                              <button
+                                onClick={() => saveUserDivisions(user)}
+                                disabled={isSavingDivisions}
+                                style={{
+                                  border: "none",
+                                  background: "#22c55e",
+                                  color: "#fff",
+                                  borderRadius: 6,
+                                  padding: "4px 8px",
+                                  cursor: isSavingDivisions ? "not-allowed" : "pointer",
+                                  fontSize: 12,
+                                  fontWeight: 600,
+                                }}
+                              >
+                                {isSavingDivisions ? "Saving..." : "Save"}
+                              </button>
+                            )}
                             {canDelete && (
                               <button
                                 onClick={() => handleDeleteUser(user)}
@@ -1495,6 +2395,72 @@ function UserManagementPage() {
                             )}
                           </div>
                         </div>
+                        {isEditing && (
+                          <div
+                            style={{
+                              padding: "12px 16px",
+                              borderTop: "1px dashed #d1d5db",
+                              backgroundColor: "#f8fafc",
+                            }}
+                          >
+                            <div
+                              style={{
+                                marginBottom: 8,
+                                fontSize: 13,
+                                color: "#334155",
+                                fontWeight: 600,
+                              }}
+                            >
+                              Edit divisions for {user.email}
+                            </div>
+                            <div
+                              style={{
+                                display: "grid",
+                                gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
+                                gap: 8,
+                              }}
+                            >
+                              {availableDivisions.map((divisionName) => (
+                                <label
+                                  key={`${user.id}-${divisionName}`}
+                                  style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13 }}
+                                >
+                                  <input
+                                    type="checkbox"
+                                    checked={editSelectedDivisions.includes(divisionName)}
+                                    onChange={() => toggleEditDivision(divisionName)}
+                                  />
+                                  <span>{divisionName}</span>
+                                </label>
+                              ))}
+                              <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13 }}>
+                                <input
+                                  type="checkbox"
+                                  checked={editIncludeOtherDivision}
+                                  onChange={(e) => setEditIncludeOtherDivision(e.target.checked)}
+                                />
+                                <span>Other</span>
+                              </label>
+                            </div>
+                            {editIncludeOtherDivision && (
+                              <input
+                                type="text"
+                                value={editOtherDivisionName}
+                                onChange={(e) => setEditOtherDivisionName(e.target.value)}
+                                placeholder="Enter new division name"
+                                style={{
+                                  width: "100%",
+                                  marginTop: 10,
+                                  padding: 8,
+                                  borderRadius: 6,
+                                  border: "1px solid #cbd5e1",
+                                  fontSize: 13,
+                                }}
+                              />
+                            )}
+                          </div>
+                        )}
+                        </React.Fragment>
                       );
                     })}
                   </div>
@@ -1503,6 +2469,825 @@ function UserManagementPage() {
             )}
           </div>
         </div>
+      </div>
+    </div>
+  );
+}
+
+/* ===========================
+   PLANT MANAGEMENT PAGE
+   =========================== */
+
+function PlantManagementPage() {
+  const [divisions, setDivisions] = useState([]);
+  const [assets, setAssets] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [message, setMessage] = useState("");
+  const [divisionFilter, setDivisionFilter] = useState("all");
+  const [newAssetCode, setNewAssetCode] = useState("");
+  const [newDisplayName, setNewDisplayName] = useState("");
+  const [newSerialNumber, setNewSerialNumber] = useState("");
+  const [newMachineReg, setNewMachineReg] = useState("");
+  const [newSelectedDivisionIds, setNewSelectedDivisionIds] = useState([]);
+  const [includeOtherDivision, setIncludeOtherDivision] = useState(false);
+  const [otherDivisionName, setOtherDivisionName] = useState("");
+  const [editingAssetId, setEditingAssetId] = useState(null);
+  const [editAssetCode, setEditAssetCode] = useState("");
+  const [editDisplayName, setEditDisplayName] = useState("");
+  const [editSerialNumber, setEditSerialNumber] = useState("");
+  const [editMachineReg, setEditMachineReg] = useState("");
+  const [editSelectedDivisionIds, setEditSelectedDivisionIds] = useState([]);
+  const [editIncludeOtherDivision, setEditIncludeOtherDivision] = useState(false);
+  const [editOtherDivisionName, setEditOtherDivisionName] = useState("");
+  const [savingAssetId, setSavingAssetId] = useState(null);
+
+  function hasMissingPlantIdentifierColumns(error) {
+    const message = String(error?.message || "").toLowerCase();
+    return message.includes("serial_number") || message.includes("machine_reg");
+  }
+
+  async function loadPlantData() {
+    setLoading(true);
+    setMessage("");
+    try {
+      const { data: divisionRows, error: divisionError } = await withAuthRetry(() =>
+        supabase
+          .from("divisions")
+          .select("id, name")
+          .order("name", { ascending: true })
+      );
+      if (divisionError) {
+        throw divisionError;
+      }
+
+      let assetRows = [];
+      const { data: primaryAssetRows, error: primaryAssetError } = await withAuthRetry(() =>
+        supabase
+          .from("plant_assets")
+          .select("id, asset_code, display_name, serial_number, machine_reg, division_id, is_active, created_at")
+          .order("asset_code", { ascending: true })
+      );
+
+      if (primaryAssetError) {
+        if (!hasMissingPlantIdentifierColumns(primaryAssetError)) {
+          throw primaryAssetError;
+        }
+
+        const { data: legacyAssetRows, error: legacyAssetError } = await withAuthRetry(() =>
+          supabase
+            .from("plant_assets")
+            .select("id, asset_code, display_name, division_id, is_active, created_at")
+            .order("asset_code", { ascending: true })
+        );
+
+        if (legacyAssetError) {
+          throw legacyAssetError;
+        }
+
+        assetRows = (legacyAssetRows || []).map((row) => ({
+          ...row,
+          serial_number: null,
+          machine_reg: null,
+        }));
+      } else {
+        assetRows = primaryAssetRows || [];
+      }
+
+      const { data: mappingRows, error: mappingError } = await withAuthRetry(() =>
+        supabase
+          .from("plant_asset_divisions")
+          .select("asset_id, division_id, divisions(id, name)")
+      );
+
+      if (mappingError) {
+        throw mappingError;
+      }
+
+      const divisionsById = new Map((divisionRows || []).map((d) => [d.id, d.name]));
+      const mappingsByAssetId = new Map();
+
+      (mappingRows || []).forEach((row) => {
+        if (!mappingsByAssetId.has(row.asset_id)) {
+          mappingsByAssetId.set(row.asset_id, []);
+        }
+        mappingsByAssetId.get(row.asset_id).push({
+          id: row.division_id,
+          name: row.divisions?.name || divisionsById.get(row.division_id) || "",
+        });
+      });
+
+      const normalizedAssets = (assetRows || []).map((assetRow) => {
+        const mappedDivisions = mappingsByAssetId.get(assetRow.id) || [];
+        if (mappedDivisions.length === 0 && assetRow.division_id) {
+          mappedDivisions.push({
+            id: assetRow.division_id,
+            name: divisionsById.get(assetRow.division_id) || "",
+          });
+        }
+
+        return {
+          ...assetRow,
+          division_ids: mappedDivisions.map((d) => d.id),
+          division_names: mappedDivisions
+            .map((d) => d.name)
+            .filter((name) => name)
+            .sort((a, b) => a.localeCompare(b)),
+        };
+      });
+
+      setDivisions(divisionRows || []);
+      setAssets(normalizedAssets);
+
+      if (newSelectedDivisionIds.length === 0 && (divisionRows || []).length > 0) {
+        setNewSelectedDivisionIds([divisionRows[0].id]);
+      }
+    } catch (err) {
+      setMessage(`Error loading plant data: ${err.message}`);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    loadPlantData();
+  }, []);
+
+  function toggleNewDivisionId(divisionId) {
+    setNewSelectedDivisionIds((prev) => {
+      if (prev.includes(divisionId)) {
+        return prev.filter((id) => id !== divisionId);
+      }
+      return [...prev, divisionId];
+    });
+  }
+
+  function toggleEditDivisionId(divisionId) {
+    setEditSelectedDivisionIds((prev) => {
+      if (prev.includes(divisionId)) {
+        return prev.filter((id) => id !== divisionId);
+      }
+      return [...prev, divisionId];
+    });
+  }
+
+  async function resolveDivisionIdByName(rawName) {
+    const divisionName = (rawName || "").trim();
+    if (!divisionName) {
+      return null;
+    }
+
+    const existing = divisions.find(
+      (division) => String(division.name || "").toLowerCase() === divisionName.toLowerCase()
+    );
+    if (existing?.id) {
+      return existing.id;
+    }
+
+    const { data: insertedDivision, error: insertDivisionError } = await withAuthRetry(() =>
+      supabase
+        .from("divisions")
+        .insert({ name: divisionName })
+        .select("id, name")
+        .single()
+    );
+
+    if (insertDivisionError) {
+      throw insertDivisionError;
+    }
+
+    return insertedDivision.id;
+  }
+
+  async function resolveDivisionIdsForSave({ selectedDivisionIds, includeOther, otherName }) {
+    const ids = Array.from(new Set((selectedDivisionIds || []).filter(Boolean)));
+    if (includeOther) {
+      const otherId = await resolveDivisionIdByName(otherName);
+      if (otherId) {
+        ids.push(otherId);
+      }
+    }
+    return Array.from(new Set(ids));
+  }
+
+  async function addPlantAsset() {
+    const assetCode = newAssetCode.trim();
+    const displayName = newDisplayName.trim();
+    const serialNumber = newSerialNumber.trim();
+    const machineReg = newMachineReg.trim();
+    const trimmedOtherDivision = otherDivisionName.trim();
+
+    if (!assetCode) {
+      setMessage("Asset ID is required.");
+      return;
+    }
+    if (newSelectedDivisionIds.length === 0 && !trimmedOtherDivision) {
+      setMessage("Please select at least one division.");
+      return;
+    }
+    if (includeOtherDivision && !trimmedOtherDivision) {
+      setMessage("Please enter a name for Other division.");
+      return;
+    }
+
+    setLoading(true);
+    setMessage("");
+    try {
+      const divisionIdsForInsert = await resolveDivisionIdsForSave({
+        selectedDivisionIds: newSelectedDivisionIds,
+        includeOther: includeOtherDivision,
+        otherName: trimmedOtherDivision,
+      });
+
+      if (divisionIdsForInsert.length === 0) {
+        throw new Error("Please select at least one division.");
+      }
+
+      const primaryDivisionId = divisionIdsForInsert[0];
+
+      let insertedAsset = null;
+      const { data: insertedAssetPrimary, error: insertAssetPrimaryError } = await withAuthRetry(() =>
+        supabase
+          .from("plant_assets")
+          .insert({
+            asset_code: assetCode,
+            display_name: displayName || assetCode,
+            serial_number: serialNumber || null,
+            machine_reg: machineReg || null,
+            division_id: primaryDivisionId,
+            is_active: true,
+          })
+          .select("id")
+          .single()
+      );
+
+      if (insertAssetPrimaryError) {
+        if (!hasMissingPlantIdentifierColumns(insertAssetPrimaryError)) {
+          throw insertAssetPrimaryError;
+        }
+
+        const { data: insertedAssetLegacy, error: insertAssetLegacyError } = await withAuthRetry(() =>
+          supabase
+            .from("plant_assets")
+            .insert({
+              asset_code: assetCode,
+              display_name: displayName || assetCode,
+              division_id: primaryDivisionId,
+              is_active: true,
+            })
+            .select("id")
+            .single()
+        );
+
+        if (insertAssetLegacyError) {
+          throw insertAssetLegacyError;
+        }
+
+        insertedAsset = insertedAssetLegacy;
+      } else {
+        insertedAsset = insertedAssetPrimary;
+      }
+
+      const { error: mapInsertError } = await withAuthRetry(() =>
+        supabase
+          .from("plant_asset_divisions")
+          .insert(
+            divisionIdsForInsert.map((divisionId) => ({
+              asset_id: insertedAsset.id,
+              division_id: divisionId,
+            }))
+          )
+      );
+
+      if (mapInsertError) {
+        throw mapInsertError;
+      }
+
+      setNewAssetCode("");
+      setNewDisplayName("");
+      setNewSerialNumber("");
+      setNewMachineReg("");
+      setNewSelectedDivisionIds([]);
+      setIncludeOtherDivision(false);
+      setOtherDivisionName("");
+      setMessage("Plant item added.");
+      await loadPlantData();
+    } catch (err) {
+      setMessage(`Error adding plant item: ${err.message}`);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function startEditAsset(assetRow) {
+    setEditingAssetId(assetRow.id);
+    setEditAssetCode(assetRow.asset_code || "");
+    setEditDisplayName(assetRow.display_name || "");
+    setEditSerialNumber(assetRow.serial_number || "");
+    setEditMachineReg(assetRow.machine_reg || "");
+    setEditSelectedDivisionIds(Array.isArray(assetRow.division_ids) ? assetRow.division_ids : []);
+    setEditIncludeOtherDivision(false);
+    setEditOtherDivisionName("");
+    setMessage("");
+  }
+
+  function cancelEditAsset() {
+    setEditingAssetId(null);
+    setEditAssetCode("");
+    setEditDisplayName("");
+    setEditSerialNumber("");
+    setEditMachineReg("");
+    setEditSelectedDivisionIds([]);
+    setEditIncludeOtherDivision(false);
+    setEditOtherDivisionName("");
+  }
+
+  async function saveAssetEdits(assetRow) {
+    const assetCode = editAssetCode.trim();
+    const displayName = editDisplayName.trim();
+    const serialNumber = editSerialNumber.trim();
+    const machineReg = editMachineReg.trim();
+    const trimmedOtherDivision = editOtherDivisionName.trim();
+
+    if (!assetCode) {
+      setMessage("Asset ID is required.");
+      return;
+    }
+    if (editSelectedDivisionIds.length === 0 && !trimmedOtherDivision) {
+      setMessage("Please select at least one division.");
+      return;
+    }
+    if (editIncludeOtherDivision && !trimmedOtherDivision) {
+      setMessage("Please enter a name for Other division.");
+      return;
+    }
+
+    setSavingAssetId(assetRow.id);
+    setMessage("");
+    try {
+      const divisionIdsForUpdate = await resolveDivisionIdsForSave({
+        selectedDivisionIds: editSelectedDivisionIds,
+        includeOther: editIncludeOtherDivision,
+        otherName: trimmedOtherDivision,
+      });
+
+      if (divisionIdsForUpdate.length === 0) {
+        throw new Error("Please select at least one division.");
+      }
+
+      const primaryDivisionId = divisionIdsForUpdate[0];
+
+      const { error: updatePrimaryError } = await withAuthRetry(() =>
+        supabase
+          .from("plant_assets")
+          .update({
+            asset_code: assetCode,
+            display_name: displayName || assetCode,
+            serial_number: serialNumber || null,
+            machine_reg: machineReg || null,
+            division_id: primaryDivisionId,
+          })
+          .eq("id", assetRow.id)
+      );
+
+      if (updatePrimaryError) {
+        if (!hasMissingPlantIdentifierColumns(updatePrimaryError)) {
+          throw updatePrimaryError;
+        }
+
+        const { error: updateLegacyError } = await withAuthRetry(() =>
+          supabase
+            .from("plant_assets")
+            .update({
+              asset_code: assetCode,
+              display_name: displayName || assetCode,
+              division_id: primaryDivisionId,
+            })
+            .eq("id", assetRow.id)
+        );
+
+        if (updateLegacyError) {
+          throw updateLegacyError;
+        }
+      }
+
+      const { error: deleteMappingsError } = await withAuthRetry(() =>
+        supabase
+          .from("plant_asset_divisions")
+          .delete()
+          .eq("asset_id", assetRow.id)
+      );
+
+      if (deleteMappingsError) {
+        throw deleteMappingsError;
+      }
+
+      const { error: insertMappingsError } = await withAuthRetry(() =>
+        supabase
+          .from("plant_asset_divisions")
+          .insert(
+            divisionIdsForUpdate.map((divisionId) => ({
+              asset_id: assetRow.id,
+              division_id: divisionId,
+            }))
+          )
+      );
+
+      if (insertMappingsError) {
+        throw insertMappingsError;
+      }
+
+      setMessage("Plant item updated.");
+      cancelEditAsset();
+      await loadPlantData();
+    } catch (err) {
+      setMessage(`Error updating plant item: ${err.message}`);
+    } finally {
+      setSavingAssetId(null);
+    }
+  }
+
+  async function deletePlantAsset(assetId, assetCode) {
+    if (!window.confirm(`Delete plant item ${assetCode}?`)) {
+      return;
+    }
+
+    setLoading(true);
+    setMessage("");
+    try {
+      const { error } = await withAuthRetry(() =>
+        supabase
+          .from("plant_assets")
+          .delete()
+          .eq("id", assetId)
+      );
+
+      if (error) {
+        throw error;
+      }
+
+      setMessage("Plant item deleted.");
+      await loadPlantData();
+    } catch (err) {
+      setMessage(`Error deleting plant item: ${err.message}`);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  const filteredAssets = assets.filter((item) => {
+    if (divisionFilter === "all") {
+      return true;
+    }
+    return Array.isArray(item.division_ids) && item.division_ids.includes(divisionFilter);
+  });
+
+  return (
+    <div style={{ padding: 30, maxWidth: 1200, margin: "0 auto" }}>
+      <h2 style={{ marginBottom: 20 }}>Plant Management</h2>
+      <p style={{ color: "#666", marginBottom: 20 }}>
+        Add and remove plant items and assign each one to a division.
+      </p>
+
+      <div
+        style={{
+          border: "1px solid #e5e7eb",
+          borderRadius: 8,
+          padding: 16,
+          marginBottom: 20,
+          backgroundColor: "#fff",
+        }}
+      >
+        <h3 style={{ marginTop: 0 }}>Add Plant Item</h3>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr auto", gap: 10 }}>
+          <input
+            type="text"
+            placeholder="Asset ID"
+            value={newAssetCode}
+            onChange={(e) => setNewAssetCode(e.target.value)}
+            style={{ padding: 10, borderRadius: 6, border: "1px solid #ddd" }}
+          />
+          <input
+            type="text"
+            placeholder="Plant description (optional)"
+            value={newDisplayName}
+            onChange={(e) => setNewDisplayName(e.target.value)}
+            style={{ padding: 10, borderRadius: 6, border: "1px solid #ddd" }}
+          />
+          <input
+            type="text"
+            placeholder="Serial number (optional)"
+            value={newSerialNumber}
+            onChange={(e) => setNewSerialNumber(e.target.value)}
+            style={{ padding: 10, borderRadius: 6, border: "1px solid #ddd" }}
+          />
+          <input
+            type="text"
+            placeholder="Machine reg (optional)"
+            value={newMachineReg}
+            onChange={(e) => setNewMachineReg(e.target.value)}
+            style={{ padding: 10, borderRadius: 6, border: "1px solid #ddd" }}
+          />
+          <button
+            onClick={addPlantAsset}
+            disabled={loading}
+            style={{
+              border: "none",
+              borderRadius: 6,
+              backgroundColor: "#22c55e",
+              color: "#fff",
+              padding: "10px 14px",
+              cursor: loading ? "not-allowed" : "pointer",
+            }}
+          >
+            Add
+          </button>
+        </div>
+        <div
+          style={{
+            marginTop: 10,
+            border: "1px solid #e5e7eb",
+            borderRadius: 8,
+            padding: 10,
+            display: "grid",
+            gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
+            gap: 8,
+          }}
+        >
+          {divisions.map((division) => (
+            <label key={`new-${division.id}`} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13 }}>
+              <input
+                type="checkbox"
+                checked={newSelectedDivisionIds.includes(division.id)}
+                onChange={() => toggleNewDivisionId(division.id)}
+              />
+              <span>{division.name}</span>
+            </label>
+          ))}
+        </div>
+        <div style={{ marginTop: 10, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+          <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 14 }}>
+            <input
+              type="checkbox"
+              checked={includeOtherDivision}
+              onChange={(e) => setIncludeOtherDivision(e.target.checked)}
+            />
+            <span>Other division</span>
+          </label>
+          {includeOtherDivision && (
+            <input
+              type="text"
+              value={otherDivisionName}
+              onChange={(e) => setOtherDivisionName(e.target.value)}
+              placeholder="Enter new division name"
+              style={{ padding: 8, borderRadius: 6, border: "1px solid #ddd", minWidth: 260 }}
+            />
+          )}
+        </div>
+      </div>
+
+      <div style={{ marginBottom: 12 }}>
+        <label style={{ marginRight: 8, fontWeight: 600 }}>Division:</label>
+        <select
+          value={divisionFilter}
+          onChange={(e) => setDivisionFilter(e.target.value)}
+          style={{ padding: 8, borderRadius: 6, border: "1px solid #ddd" }}
+        >
+          <option value="all">All Divisions</option>
+          {divisions.map((division) => (
+            <option key={division.id} value={division.id}>
+              {division.name}
+            </option>
+          ))}
+        </select>
+      </div>
+
+      {message && (
+        <div
+          style={{
+            marginBottom: 12,
+            padding: 10,
+            borderRadius: 6,
+            backgroundColor: message.startsWith("Error") ? "#fee2e2" : "#dcfce7",
+            color: message.startsWith("Error") ? "#991b1b" : "#166534",
+          }}
+        >
+          {message}
+        </div>
+      )}
+
+      <div style={{ border: "1px solid #e5e7eb", borderRadius: 8, overflow: "hidden" }}>
+        <table style={{ width: "100%", borderCollapse: "collapse" }}>
+          <thead>
+            <tr style={{ backgroundColor: "#f9fafb" }}>
+              <th style={{ textAlign: "left", padding: 10 }}>Asset ID</th>
+              <th style={{ textAlign: "left", padding: 10 }}>Plant Description</th>
+              <th style={{ textAlign: "left", padding: 10 }}>Serial Number</th>
+              <th style={{ textAlign: "left", padding: 10 }}>Machine Reg</th>
+              <th style={{ textAlign: "left", padding: 10 }}>Divisions</th>
+              <th style={{ textAlign: "left", padding: 10 }}>Action</th>
+            </tr>
+          </thead>
+          <tbody>
+            {filteredAssets.map((assetRow) => {
+              const isEditing = editingAssetId === assetRow.id;
+              const isSaving = savingAssetId === assetRow.id;
+              return (
+                <tr key={assetRow.id} style={{ borderTop: "1px solid #f1f5f9" }}>
+                  <td style={{ padding: 10 }}>
+                    {isEditing ? (
+                      <input
+                        type="text"
+                        value={editAssetCode}
+                        onChange={(e) => setEditAssetCode(e.target.value)}
+                        style={{ width: "100%", padding: 8, borderRadius: 6, border: "1px solid #ddd" }}
+                      />
+                    ) : (
+                      assetRow.asset_code
+                    )}
+                  </td>
+                  <td style={{ padding: 10 }}>
+                    {isEditing ? (
+                      <input
+                        type="text"
+                        value={editDisplayName}
+                        onChange={(e) => setEditDisplayName(e.target.value)}
+                        style={{ width: "100%", padding: 8, borderRadius: 6, border: "1px solid #ddd" }}
+                      />
+                    ) : (
+                      assetRow.display_name || "-"
+                    )}
+                  </td>
+                  <td style={{ padding: 10 }}>
+                    {isEditing ? (
+                      <input
+                        type="text"
+                        value={editSerialNumber}
+                        onChange={(e) => setEditSerialNumber(e.target.value)}
+                        style={{ width: "100%", padding: 8, borderRadius: 6, border: "1px solid #ddd" }}
+                      />
+                    ) : (
+                      assetRow.serial_number || "-"
+                    )}
+                  </td>
+                  <td style={{ padding: 10 }}>
+                    {isEditing ? (
+                      <input
+                        type="text"
+                        value={editMachineReg}
+                        onChange={(e) => setEditMachineReg(e.target.value)}
+                        style={{ width: "100%", padding: 8, borderRadius: 6, border: "1px solid #ddd" }}
+                      />
+                    ) : (
+                      assetRow.machine_reg || "-"
+                    )}
+                  </td>
+                  <td style={{ padding: 10 }}>
+                    {isEditing ? (
+                      <div>
+                        <div
+                          style={{
+                            border: "1px solid #e5e7eb",
+                            borderRadius: 8,
+                            padding: 8,
+                            display: "grid",
+                            gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+                            gap: 6,
+                          }}
+                        >
+                          {divisions.map((division) => (
+                            <label key={`edit-${assetRow.id}-${division.id}`} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12 }}>
+                              <input
+                                type="checkbox"
+                                checked={editSelectedDivisionIds.includes(division.id)}
+                                onChange={() => toggleEditDivisionId(division.id)}
+                              />
+                              <span>{division.name}</span>
+                            </label>
+                          ))}
+                        </div>
+                        <label style={{ marginTop: 6, display: "flex", alignItems: "center", gap: 8, fontSize: 12 }}>
+                          <input
+                            type="checkbox"
+                            checked={editIncludeOtherDivision}
+                            onChange={(e) => setEditIncludeOtherDivision(e.target.checked)}
+                          />
+                          <span>Other division</span>
+                        </label>
+                        {editIncludeOtherDivision && (
+                          <input
+                            type="text"
+                            value={editOtherDivisionName}
+                            onChange={(e) => setEditOtherDivisionName(e.target.value)}
+                            placeholder="Enter new division name"
+                            style={{ width: "100%", marginTop: 6, padding: 8, borderRadius: 6, border: "1px solid #ddd" }}
+                          />
+                        )}
+                      </div>
+                    ) : (
+                      (assetRow.division_names && assetRow.division_names.length > 0)
+                        ? (
+                          <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                            {assetRow.division_names.map((divisionName) => {
+                              const badgeStyle = getDivisionBadgeStyle(divisionName);
+                              return (
+                                <span
+                                  key={`${assetRow.id}-${divisionName}`}
+                                  style={{
+                                    fontSize: 11,
+                                    fontWeight: 600,
+                                    padding: "2px 8px",
+                                    borderRadius: 999,
+                                    backgroundColor: badgeStyle.backgroundColor,
+                                    color: badgeStyle.color,
+                                    border: badgeStyle.border,
+                                  }}
+                                >
+                                  {divisionName}
+                                </span>
+                              );
+                            })}
+                          </div>
+                        )
+                        : "-"
+                    )}
+                  </td>
+                  <td style={{ padding: 10 }}>
+                    {isEditing ? (
+                      <div style={{ display: "flex", gap: 8 }}>
+                        <button
+                          onClick={() => saveAssetEdits(assetRow)}
+                          disabled={isSaving}
+                          style={{
+                            border: "none",
+                            backgroundColor: "#22c55e",
+                            color: "#fff",
+                            borderRadius: 6,
+                            padding: "6px 10px",
+                            cursor: isSaving ? "not-allowed" : "pointer",
+                          }}
+                        >
+                          {isSaving ? "Saving..." : "Save"}
+                        </button>
+                        <button
+                          onClick={cancelEditAsset}
+                          disabled={isSaving}
+                          style={{
+                            border: "1px solid #94a3b8",
+                            backgroundColor: "#fff",
+                            color: "#334155",
+                            borderRadius: 6,
+                            padding: "6px 10px",
+                            cursor: isSaving ? "not-allowed" : "pointer",
+                          }}
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    ) : (
+                      <div style={{ display: "flex", gap: 8 }}>
+                        <button
+                          onClick={() => startEditAsset(assetRow)}
+                          disabled={loading}
+                          style={{
+                            border: "1px solid #2563eb",
+                            backgroundColor: "#fff",
+                            color: "#2563eb",
+                            borderRadius: 6,
+                            padding: "6px 10px",
+                            cursor: loading ? "not-allowed" : "pointer",
+                          }}
+                        >
+                          Edit
+                        </button>
+                        <button
+                          onClick={() => deletePlantAsset(assetRow.id, assetRow.asset_code)}
+                          disabled={loading}
+                          style={{
+                            border: "none",
+                            backgroundColor: "#ef4444",
+                            color: "#fff",
+                            borderRadius: 6,
+                            padding: "6px 10px",
+                            cursor: loading ? "not-allowed" : "pointer",
+                          }}
+                        >
+                          Delete
+                        </button>
+                      </div>
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
+            {!loading && filteredAssets.length === 0 && (
+              <tr>
+                <td colSpan={6} style={{ padding: 14, color: "#6b7280" }}>
+                  No plant items found for this filter.
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
       </div>
     </div>
   );
@@ -1607,10 +3392,41 @@ function DefectsPage({ activeTab }) {
     setError("");
     let hadCache = false;
 
+    let scope;
+    try {
+      const {
+        data: { user },
+        error: userError,
+      } = await supabase.auth.getUser();
+      if (userError) {
+        throw userError;
+      }
+      scope = await loadDivisionScopeForUser(user?.id);
+    } catch (scopeErr) {
+      console.error(scopeErr);
+      setDefects([]);
+      setError("Failed to load your regional access scope.");
+      setLoading(false);
+      loadingDefectsRef.current = false;
+      return;
+    }
+
+    if ((scope.divisionIds || []).length === 0 && (scope.visibleAssetCodes || []).length === 0) {
+      setDefects([]);
+      setDefectsStale(false);
+      setLoading(false);
+      setLastDefectsSync(Date.now());
+      loadingDefectsRef.current = false;
+      return;
+    }
+
     const cachedDefects = readCache(CACHE_KEYS.defects);
     const cachedDefectsTs = readCacheTimestamp(CACHE_KEYS.defects);
     if (cachedDefects) {
-      setDefects(cachedDefects);
+      const scopedCached = (cachedDefects || []).filter((defect) =>
+        canViewDefectWithScope(defect, scope)
+      );
+      setDefects(scopedCached);
       setDefectsStale(false);
       setLoading(false);
       if (cachedDefectsTs) {
@@ -1623,11 +3439,44 @@ function DefectsPage({ activeTab }) {
     defectsRequestIdRef.current = requestId;
     
     try {
-      const { data, error } = await withAuthRetry(() =>
+      const makeBaseQuery = () =>
         supabase
           .from("defects")
           .select("*")
-          .order("created_at", { ascending: false })
+          .order("created_at", { ascending: false });
+
+      const fetchByDivision = async () => {
+        if ((scope.divisionIds || []).length === 0) {
+          return { data: [], error: null };
+        }
+        return withAuthRetry(() => makeBaseQuery().in("division_id", scope.divisionIds));
+      };
+
+      const fetchByAsset = async () => {
+        if ((scope.visibleAssetCodes || []).length === 0) {
+          return { data: [], error: null };
+        }
+        return withAuthRetry(() =>
+          makeBaseQuery().in("asset", scope.visibleAssetCodes)
+        );
+      };
+
+      const [divisionResult, assetResult] = await Promise.all([
+        fetchByDivision(),
+        fetchByAsset(),
+      ]);
+
+      const error = divisionResult.error || assetResult.error;
+      const mergedMap = new Map();
+
+      [...(divisionResult.data || []), ...(assetResult.data || [])].forEach((defect) => {
+        if (defect?.id) {
+          mergedMap.set(defect.id, defect);
+        }
+      });
+
+      const data = Array.from(mergedMap.values()).sort(
+        (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
       );
 
       if (defectsRequestIdRef.current !== requestId) {
@@ -3536,13 +5385,45 @@ export default function App() {
   const [session, setSession] = useState(null);
   const [role, setRole] = useState(null); // "admin" or "user" or null
   const [roleLoading, setRoleLoading] = useState(false);
+  const [accessDivisionNames, setAccessDivisionNames] = useState([]);
   const [view, setView] = useState("loading"); // "loading" | "login" | "reset" | "app"
   const [activeTab, setActiveTab] = useState("defects");
+
+  async function loadDivisionNamesForSession(currentSession) {
+    if (!currentSession?.user?.id) {
+      setAccessDivisionNames([]);
+      return;
+    }
+
+    const { data, error } = await withAuthRetry(() =>
+      supabase
+        .from("user_divisions")
+        .select("divisions(name)")
+        .eq("user_id", currentSession.user.id)
+    );
+
+    if (error) {
+      console.error("Error loading division badges:", error);
+      setAccessDivisionNames([]);
+      return;
+    }
+
+    const names = Array.from(
+      new Set(
+        (data || [])
+          .map((row) => row?.divisions?.name)
+          .filter((name) => !!name)
+      )
+    ).sort((a, b) => a.localeCompare(b));
+
+    setAccessDivisionNames(names);
+  }
 
   async function loadRoleForSession(currentSession) {
     if (!currentSession) {
       setRole(null);
       setRoleLoading(false);
+      setAccessDivisionNames([]);
       return;
     }
 
@@ -3560,10 +5441,12 @@ export default function App() {
       console.error("Error loading role:", error);
       setRole(null);
       setRoleLoading(false);
+      setAccessDivisionNames([]);
       return;
     }
 
     setRole(data?.role ?? "user");
+    await loadDivisionNamesForSession(currentSession);
     setRoleLoading(false);
   }
 
@@ -3630,6 +5513,7 @@ export default function App() {
             setSession(null);
             setRole(null);
             setRoleLoading(false);
+            setAccessDivisionNames([]);
             setView("login");
             return;
           }
@@ -3783,6 +5667,31 @@ export default function App() {
           <div style={{ fontSize: 14, color: "#666" }}>
             Logged in as: <strong style={{ color: "#1d4ed8" }}>{session?.user?.email || "Unknown"}</strong>
           </div>
+          <div style={{ display: "flex", flexWrap: "wrap", justifyContent: "flex-end", gap: 6, maxWidth: 460 }}>
+            {accessDivisionNames.length > 0 ? (
+              accessDivisionNames.map((divisionName) => {
+                const badgeStyle = getDivisionBadgeStyle(divisionName);
+                return (
+                  <span
+                    key={divisionName}
+                    style={{
+                      fontSize: 12,
+                      fontWeight: 600,
+                      padding: "3px 8px",
+                      borderRadius: 999,
+                      backgroundColor: badgeStyle.backgroundColor,
+                      color: badgeStyle.color,
+                      border: badgeStyle.border,
+                    }}
+                  >
+                    {divisionName}
+                  </span>
+                );
+              })
+            ) : (
+              <span style={{ fontSize: 12, color: "#6b7280" }}>No region assignments</span>
+            )}
+          </div>
           <button
             onClick={() => supabase.auth.signOut()}
             style={{
@@ -3856,6 +5765,22 @@ export default function App() {
           >
             👥 User Management
           </button>
+          <button
+            onClick={() => setActiveTab("plant")}
+            style={{
+              padding: "15px 20px",
+              border: "none",
+              backgroundColor: "transparent",
+              borderBottom: activeTab === "plant" ? "3px solid #3b82f6" : "3px solid transparent",
+              color: activeTab === "plant" ? "#3b82f6" : "#6b7280",
+              fontWeight: 600,
+              fontSize: 16,
+              cursor: "pointer",
+              transition: "all 0.2s"
+            }}
+          >
+            🏗️ Plant Management
+          </button>
         </div>
       </div>
 
@@ -3863,6 +5788,7 @@ export default function App() {
       {activeTab === "defects" && <DefectsPage activeTab={activeTab} key="defects" />}
       {activeTab === "tasks" && <ActionTaskPage activeTab={activeTab} key="tasks" />}
       {activeTab === "users" && <UserManagementPage key="users" />}
+      {activeTab === "plant" && <PlantManagementPage key="plant" />}
     </div>
   );
 }

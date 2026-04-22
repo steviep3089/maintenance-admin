@@ -87,7 +87,8 @@ serve(async (req) => {
   }
 
   try {
-    const { email, role, redirectTo } = await req.json()
+    const { email, role, redirectTo, divisions = [], otherDivisionName = "" } = await req.json()
+    const inviteSentAt = new Date().toISOString()
     
     console.log('Creating user:', email, 'with role:', role)
 
@@ -107,6 +108,9 @@ serve(async (req) => {
         data: {
           invited: true,
           password_set: false,
+          invite_sent_at: inviteSentAt,
+          inactive_due_to_non_usage: false,
+          inactive_marked_at: null,
           role,
         },
       },
@@ -133,6 +137,9 @@ serve(async (req) => {
         user_metadata: {
           invited: true,
           password_set: false,
+          invite_sent_at: inviteSentAt,
+          inactive_due_to_non_usage: false,
+          inactive_marked_at: null,
           role,
         },
       }
@@ -165,6 +172,74 @@ serve(async (req) => {
       console.log('Role assigned successfully:', roleData)
     } else {
       console.log('Regular user - no role entry needed')
+    }
+
+    // Resolve division assignments for the invited user.
+    const normalizedDivisionNames = Array.from(
+      new Set(
+        [
+          ...((Array.isArray(divisions) ? divisions : []) as string[]),
+          typeof otherDivisionName === "string" ? otherDivisionName.trim() : "",
+        ]
+          .map((v) => (v || "").trim())
+          .filter((v) => v.length > 0)
+      )
+    )
+
+    if (normalizedDivisionNames.length > 0) {
+      const { data: existingDivisions, error: divisionsLoadError } = await supabase
+        .from("divisions")
+        .select("id, name")
+
+      if (divisionsLoadError) {
+        throw new Error(`Failed to load divisions: ${divisionsLoadError.message}`)
+      }
+
+      const existingByName = new Map(
+        (existingDivisions || []).map((d) => [String(d.name).toLowerCase(), d])
+      )
+
+      const divisionIds: string[] = []
+
+      for (const divisionName of normalizedDivisionNames) {
+        const key = divisionName.toLowerCase()
+        const existing = existingByName.get(key)
+        if (existing?.id) {
+          divisionIds.push(existing.id)
+          continue
+        }
+
+        const { data: insertedDivision, error: insertDivisionError } = await supabase
+          .from("divisions")
+          .insert({ name: divisionName })
+          .select("id, name")
+          .single()
+
+        if (insertDivisionError) {
+          throw new Error(`Failed to create division \"${divisionName}\": ${insertDivisionError.message}`)
+        }
+
+        if (insertedDivision?.id) {
+          existingByName.set(key, insertedDivision)
+          divisionIds.push(insertedDivision.id)
+        }
+      }
+
+      if (divisionIds.length > 0) {
+        const { error: assignmentError } = await supabase
+          .from("user_divisions")
+          .insert(
+            divisionIds.map((divisionId) => ({
+              user_id: linkData.user.id,
+              division_id: divisionId,
+            }))
+          )
+
+        if (assignmentError) {
+          await supabase.auth.admin.deleteUser(linkData.user.id)
+          throw new Error(`Failed to assign divisions: ${assignmentError.message}`)
+        }
+      }
     }
 
     const isAdmin = role === 'admin' || role === 'manager'
@@ -204,7 +279,8 @@ serve(async (req) => {
         user: {
           id: linkData.user.id,
           email: linkData.user.email,
-          role: role
+          role: role,
+          divisions: normalizedDivisionNames,
         }
       }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } }
