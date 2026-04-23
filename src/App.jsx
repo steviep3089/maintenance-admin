@@ -4903,7 +4903,7 @@ function DefectsPage({ activeTab }) {
                   <h1 style={{ margin: 0, fontSize: "14pt", fontWeight: "bold", color: reportDarkBlue }}>DEFECT REPORT</h1>
                 </div>
                 <img 
-                  src="/holcim.png" 
+                  src="/holcim-transparent.png" 
                   alt="Logo" 
                   style={{ maxHeight: 40, maxWidth: 100 }}
                 />
@@ -5650,7 +5650,7 @@ export default function App() {
       }}>
         <div style={{ display: "flex", alignItems: "center", gap: 15 }}>
           <img 
-            src="/logo.png" 
+            src="/holcim-transparent.png" 
             alt="Logo" 
             style={{ height: 50 }}
           />
