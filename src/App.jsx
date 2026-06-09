@@ -4011,6 +4011,26 @@ function DefectsPage({ activeTab }) {
     }
   }
 
+  async function resolveUploadedPhotoUrl(bucket, filePath, displayName, uploadErrors) {
+    const { data: signed, error: urlError } = await withAuthRetry(() =>
+      supabase.storage.from(bucket).createSignedUrl(filePath, 60 * 60 * 24 * 365)
+    );
+
+    if (!urlError && signed?.signedUrl) {
+      return signed.signedUrl;
+    }
+
+    const { data: publicData } = supabase.storage.from(bucket).getPublicUrl(filePath);
+    if (publicData?.publicUrl) {
+      return publicData.publicUrl;
+    }
+
+    uploadErrors.push(
+      `${displayName}: Uploaded file but could not create an accessible URL (${urlError?.message || "Unknown error"})`
+    );
+    return null;
+  }
+
   async function handleDeleteDefectPhoto(defectId, photoUrl) {
     if (!window.confirm("Delete this photo?")) return;
     setEditState((prev) => ({
@@ -4155,14 +4175,15 @@ function DefectsPage({ activeTab }) {
             continue;
           }
 
-          const { data: signed, error: urlError } = await withAuthRetry(() =>
-            supabase.storage
-              .from("defect-photos")
-              .createSignedUrl(filePath, 60 * 60 * 24 * 365)
+          const uploadedUrl = await resolveUploadedPhotoUrl(
+            "defect-photos",
+            filePath,
+            `Defect photo ${displayName || file?.name || i + 1}`,
+            uploadErrors
           );
 
-          if (!urlError && signed?.signedUrl) {
-            newDefectUrls.push(signed.signedUrl);
+          if (uploadedUrl) {
+            newDefectUrls.push(uploadedUrl);
           }
         }
       }
@@ -4203,14 +4224,15 @@ function DefectsPage({ activeTab }) {
             continue;
           }
 
-          const { data: signed, error: urlError } = await withAuthRetry(() =>
-            supabase.storage
-              .from("repair-photos")
-              .createSignedUrl(filePath, 60 * 60 * 24 * 365)
+          const uploadedUrl = await resolveUploadedPhotoUrl(
+            "repair-photos",
+            filePath,
+            `Repair photo ${displayName || file?.name || i + 1}`,
+            uploadErrors
           );
 
-          if (!urlError && signed?.signedUrl) {
-            newRepairUrls.push(signed.signedUrl);
+          if (uploadedUrl) {
+            newRepairUrls.push(uploadedUrl);
           }
         }
       }
