@@ -4160,6 +4160,12 @@ function DefectsPage({ activeTab }) {
         ? state.newFiles
         : (pendingSelection.newFiles || []);
 
+    console.info("[photo-upload] selected files", {
+      defectId: id,
+      defectPhotos: selectedDefectFiles.length,
+      repairPhotos: selectedRepairFiles.length,
+    });
+
     try {
       setEditState((prev) => ({
         ...prev,
@@ -4269,6 +4275,13 @@ function DefectsPage({ activeTab }) {
       const attemptedUploads =
         selectedDefectFiles.length + selectedRepairFiles.length;
       const successfulUploads = newDefectUrls.length + newRepairUrls.length;
+
+      console.info("[photo-upload] upload result", {
+        defectId: id,
+        attemptedUploads,
+        successfulUploads,
+        errorCount: uploadErrors.length,
+      });
 
       if (attemptedUploads > 0 && successfulUploads === 0 && uploadErrors.length > 0) {
         throw new Error(`No photos were uploaded. ${uploadErrors[0]}`);
@@ -4800,12 +4813,14 @@ function DefectsPage({ activeTab }) {
                                       type="file"
                                       multiple
                                       accept="image/*"
-                                      onChange={(e) =>
+                                      onChange={(e) => {
                                         handleDefectPhotosChange(
                                           d.id,
                                           e.target.files
-                                        )
-                                      }
+                                        );
+                                        // Allow selecting the same file again on desktop browsers.
+                                        e.target.value = "";
+                                      }}
                                     />
                                     {edit.newDefectFiles &&
                                       edit.newDefectFiles.length > 0 && (
@@ -4911,12 +4926,14 @@ function DefectsPage({ activeTab }) {
                                       type="file"
                                       multiple
                                       accept="image/*"
-                                      onChange={(e) =>
+                                      onChange={(e) => {
                                         handleFilesChange(
                                           d.id,
                                           e.target.files
-                                        )
-                                      }
+                                        );
+                                        // Allow selecting the same file again on desktop browsers.
+                                        e.target.value = "";
+                                      }}
                                     />
                                     {edit.newFiles &&
                                       edit.newFiles.length > 0 && (
