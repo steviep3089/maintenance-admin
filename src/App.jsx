@@ -3318,11 +3318,20 @@ function DefectsPage({ activeTab }) {
   const adminUsersTimeoutRef = useRef(null);
   const loadingAdminUsersRef = useRef(false);
   const adminUsersRetryRef = useRef(0);
+  const filePickerResumeBlockUntilRef = useRef(0);
   const [defectsStale, setDefectsStale] = useState(false);
   const [adminUsersStale, setAdminUsersStale] = useState(false);
   const [lastDefectsSync, setLastDefectsSync] = useState(null);
   const [lastAdminUsersSync, setLastAdminUsersSync] = useState(null);
   const pendingUploadFilesRef = useRef({});
+
+  function suppressResumeReload(ms = 3000) {
+    filePickerResumeBlockUntilRef.current = Date.now() + ms;
+  }
+
+  function shouldSkipResumeReload() {
+    return Date.now() < filePickerResumeBlockUntilRef.current;
+  }
 
   async function loadAdminUsers() {
     let hadCache = false;
@@ -3520,11 +3529,17 @@ function DefectsPage({ activeTab }) {
 
     const cleanup = addResumeListeners(
       () => {
+        if (shouldSkipResumeReload()) {
+          return;
+        }
         void resumeSessionIfNeeded();
         loadDefects();
         loadAdminUsers();
       },
       () => {
+        if (shouldSkipResumeReload()) {
+          return;
+        }
         defectsRequestIdRef.current += 1;
         loadingDefectsRef.current = false;
         setLoading(false);
@@ -4826,7 +4841,9 @@ function DefectsPage({ activeTab }) {
                                       type="file"
                                       multiple
                                       accept="image/*"
+                                      onClick={() => suppressResumeReload()}
                                       onChange={(e) => {
+                                        suppressResumeReload();
                                         handleDefectPhotosChange(
                                           d.id,
                                           e.target.files
@@ -4939,7 +4956,9 @@ function DefectsPage({ activeTab }) {
                                       type="file"
                                       multiple
                                       accept="image/*"
+                                      onClick={() => suppressResumeReload()}
                                       onChange={(e) => {
+                                        suppressResumeReload();
                                         handleFilesChange(
                                           d.id,
                                           e.target.files
