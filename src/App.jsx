@@ -3322,6 +3322,7 @@ function DefectsPage({ activeTab }) {
   const [adminUsersStale, setAdminUsersStale] = useState(false);
   const [lastDefectsSync, setLastDefectsSync] = useState(null);
   const [lastAdminUsersSync, setLastAdminUsersSync] = useState(null);
+  const pendingUploadFilesRef = useRef({});
 
   async function loadAdminUsers() {
     let hadCache = false;
@@ -3846,6 +3847,7 @@ function DefectsPage({ activeTab }) {
           status: defect.status || "Reported",
           actionsTaken: defect.actions_taken || "",
           repairCompany: defect.repair_company || "",
+          newDefectFiles: [],
           newFiles: [],
           saving: false,
           error: "",
@@ -3870,11 +3872,19 @@ function DefectsPage({ activeTab }) {
 
   function handleFilesChange(defectId, fileList) {
     const filesArray = Array.from(fileList || []);
+    pendingUploadFilesRef.current[defectId] = {
+      ...(pendingUploadFilesRef.current[defectId] || {}),
+      newFiles: filesArray,
+    };
     updateEditField(defectId, "newFiles", filesArray);
   }
 
   function handleDefectPhotosChange(defectId, fileList) {
     const filesArray = Array.from(fileList || []);
+    pendingUploadFilesRef.current[defectId] = {
+      ...(pendingUploadFilesRef.current[defectId] || {}),
+      newDefectFiles: filesArray,
+    };
     updateEditField(defectId, "newDefectFiles", filesArray);
   }
 
@@ -4140,6 +4150,16 @@ function DefectsPage({ activeTab }) {
     const state = editState[id];
     if (!state) return;
 
+    const pendingSelection = pendingUploadFilesRef.current[id] || {};
+    const selectedDefectFiles =
+      state.newDefectFiles && state.newDefectFiles.length > 0
+        ? state.newDefectFiles
+        : (pendingSelection.newDefectFiles || []);
+    const selectedRepairFiles =
+      state.newFiles && state.newFiles.length > 0
+        ? state.newFiles
+        : (pendingSelection.newFiles || []);
+
     try {
       setEditState((prev) => ({
         ...prev,
@@ -4150,9 +4170,9 @@ function DefectsPage({ activeTab }) {
 
       // Upload new defect photos
       let newDefectUrls = [];
-      if (state.newDefectFiles && state.newDefectFiles.length > 0) {
-        for (let i = 0; i < state.newDefectFiles.length; i++) {
-          const prepared = await normalizeImageForUpload(state.newDefectFiles[i]);
+      if (selectedDefectFiles.length > 0) {
+        for (let i = 0; i < selectedDefectFiles.length; i++) {
+          const prepared = await normalizeImageForUpload(selectedDefectFiles[i]);
           const file = prepared.file;
           const { ext, mime, displayName } = prepared;
           const filePath = `${id}_defect_admin_${Date.now()}_${i}.${ext}`;
@@ -4199,9 +4219,9 @@ function DefectsPage({ activeTab }) {
 
       // Upload new repair photos
       let newRepairUrls = [];
-      if (state.newFiles && state.newFiles.length > 0) {
-        for (let i = 0; i < state.newFiles.length; i++) {
-          const prepared = await normalizeImageForUpload(state.newFiles[i]);
+      if (selectedRepairFiles.length > 0) {
+        for (let i = 0; i < selectedRepairFiles.length; i++) {
+          const prepared = await normalizeImageForUpload(selectedRepairFiles[i]);
           const file = prepared.file;
           const { ext, mime, displayName } = prepared;
           const filePath = `${id}_repair_admin_${Date.now()}_${i}.${ext}`;
@@ -4247,7 +4267,7 @@ function DefectsPage({ activeTab }) {
           : existingRepairPhotos;
 
       const attemptedUploads =
-        (state.newDefectFiles?.length || 0) + (state.newFiles?.length || 0);
+        selectedDefectFiles.length + selectedRepairFiles.length;
       const successfulUploads = newDefectUrls.length + newRepairUrls.length;
 
       if (attemptedUploads > 0 && successfulUploads === 0 && uploadErrors.length > 0) {
@@ -4346,6 +4366,7 @@ function DefectsPage({ activeTab }) {
           error: "",
         },
       }));
+      delete pendingUploadFilesRef.current[id];
 
       if (uploadErrors.length > 0) {
         alert(
