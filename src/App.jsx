@@ -3912,6 +3912,105 @@ function DefectsPage({ activeTab }) {
     return { ext, mime };
   }
 
+  function getBaseFileName(fileName, fallback = "image") {
+    const normalized = (fileName || "").trim();
+    if (!normalized) return fallback;
+    const lastDot = normalized.lastIndexOf(".");
+    if (lastDot <= 0) return normalized;
+    return normalized.slice(0, lastDot);
+  }
+
+  async function normalizeImageForUpload(file) {
+    const originalName = file?.name || "image";
+    const baseName = getBaseFileName(originalName, "image");
+
+    const hasImageType = file?.type?.startsWith("image/");
+    if (!hasImageType) {
+      const fallbackMeta = getImageUploadMeta(file);
+      return {
+        file,
+        ext: fallbackMeta.ext,
+        mime: fallbackMeta.mime,
+        displayName: originalName,
+      };
+    }
+
+    const shouldConvertToJpeg =
+      file.type !== "image/jpeg" || file.size > 6 * 1024 * 1024;
+
+    if (!shouldConvertToJpeg) {
+      return {
+        file,
+        ext: "jpg",
+        mime: "image/jpeg",
+        displayName: originalName,
+      };
+    }
+
+    try {
+      const imageUrl = URL.createObjectURL(file);
+      const image = await new Promise((resolve, reject) => {
+        const img = new Image();
+        img.onload = () => resolve(img);
+        img.onerror = () => reject(new Error("Could not read image"));
+        img.src = imageUrl;
+      });
+
+      const maxDimension = 2200;
+      const longestSide = Math.max(image.width, image.height);
+      const scale = longestSide > maxDimension ? maxDimension / longestSide : 1;
+      const width = Math.max(1, Math.round(image.width * scale));
+      const height = Math.max(1, Math.round(image.height * scale));
+
+      const canvas = document.createElement("canvas");
+      canvas.width = width;
+      canvas.height = height;
+
+      const context = canvas.getContext("2d");
+      if (!context) {
+        throw new Error("Could not prepare image for upload");
+      }
+
+      context.drawImage(image, 0, 0, width, height);
+
+      const jpegBlob = await new Promise((resolve, reject) => {
+        canvas.toBlob(
+          (blob) => {
+            if (blob) {
+              resolve(blob);
+            } else {
+              reject(new Error("Image conversion failed"));
+            }
+          },
+          "image/jpeg",
+          0.86
+        );
+      });
+
+      URL.revokeObjectURL(imageUrl);
+
+      const convertedFile = new File([jpegBlob], `${baseName}.jpg`, {
+        type: "image/jpeg",
+      });
+
+      return {
+        file: convertedFile,
+        ext: "jpg",
+        mime: "image/jpeg",
+        displayName: originalName,
+      };
+    } catch (conversionError) {
+      console.warn("Image conversion skipped, using original file:", conversionError);
+      const fallbackMeta = getImageUploadMeta(file);
+      return {
+        file,
+        ext: fallbackMeta.ext,
+        mime: fallbackMeta.mime,
+        displayName: originalName,
+      };
+    }
+  }
+
   async function handleDeleteDefectPhoto(defectId, photoUrl) {
     if (!window.confirm("Delete this photo?")) return;
     setEditState((prev) => ({
@@ -4033,8 +4132,9 @@ function DefectsPage({ activeTab }) {
       let newDefectUrls = [];
       if (state.newDefectFiles && state.newDefectFiles.length > 0) {
         for (let i = 0; i < state.newDefectFiles.length; i++) {
-          const file = state.newDefectFiles[i];
-          const { ext, mime } = getImageUploadMeta(file);
+          const prepared = await normalizeImageForUpload(state.newDefectFiles[i]);
+          const file = prepared.file;
+          const { ext, mime, displayName } = prepared;
           const filePath = `${id}_defect_admin_${Date.now()}_${i}.${ext}`;
 
           const { error: uploadError } = await supabase.storage
@@ -4046,7 +4146,7 @@ function DefectsPage({ activeTab }) {
           if (uploadError) {
             console.error("Defect photo upload error:", uploadError);
             uploadErrors.push(
-              `Defect photo ${file?.name || i + 1}: ${
+              `Defect photo ${displayName || file?.name || i + 1}: ${
                 uploadError.message || "Upload failed"
               }`
             );
@@ -4076,8 +4176,9 @@ function DefectsPage({ activeTab }) {
       let newRepairUrls = [];
       if (state.newFiles && state.newFiles.length > 0) {
         for (let i = 0; i < state.newFiles.length; i++) {
-          const file = state.newFiles[i];
-          const { ext, mime } = getImageUploadMeta(file);
+          const prepared = await normalizeImageForUpload(state.newFiles[i]);
+          const file = prepared.file;
+          const { ext, mime, displayName } = prepared;
           const filePath = `${id}_repair_admin_${Date.now()}_${i}.${ext}`;
 
           const { error: uploadError } = await supabase.storage
@@ -4089,7 +4190,7 @@ function DefectsPage({ activeTab }) {
           if (uploadError) {
             console.error("Repair photo upload error:", uploadError);
             uploadErrors.push(
-              `Repair photo ${file?.name || i + 1}: ${
+              `Repair photo ${displayName || file?.name || i + 1}: ${
                 uploadError.message || "Upload failed"
               }`
             );
