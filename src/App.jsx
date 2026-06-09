@@ -4137,11 +4137,13 @@ function DefectsPage({ activeTab }) {
           const { ext, mime, displayName } = prepared;
           const filePath = `${id}_defect_admin_${Date.now()}_${i}.${ext}`;
 
-          const { error: uploadError } = await supabase.storage
-            .from("defect-photos")
-            .upload(filePath, file, {
-              contentType: mime,
-            });
+          const { error: uploadError } = await withAuthRetry(() =>
+            supabase.storage
+              .from("defect-photos")
+              .upload(filePath, file, {
+                contentType: mime,
+              })
+          );
 
           if (uploadError) {
             console.error("Defect photo upload error:", uploadError);
@@ -4153,9 +4155,11 @@ function DefectsPage({ activeTab }) {
             continue;
           }
 
-          const { data: signed, error: urlError } = await supabase.storage
-            .from("defect-photos")
-            .createSignedUrl(filePath, 60 * 60 * 24 * 365);
+          const { data: signed, error: urlError } = await withAuthRetry(() =>
+            supabase.storage
+              .from("defect-photos")
+              .createSignedUrl(filePath, 60 * 60 * 24 * 365)
+          );
 
           if (!urlError && signed?.signedUrl) {
             newDefectUrls.push(signed.signedUrl);
@@ -4181,11 +4185,13 @@ function DefectsPage({ activeTab }) {
           const { ext, mime, displayName } = prepared;
           const filePath = `${id}_repair_admin_${Date.now()}_${i}.${ext}`;
 
-          const { error: uploadError } = await supabase.storage
-            .from("repair-photos")
-            .upload(filePath, file, {
-              contentType: mime,
-            });
+          const { error: uploadError } = await withAuthRetry(() =>
+            supabase.storage
+              .from("repair-photos")
+              .upload(filePath, file, {
+                contentType: mime,
+              })
+          );
 
           if (uploadError) {
             console.error("Repair photo upload error:", uploadError);
@@ -4197,9 +4203,11 @@ function DefectsPage({ activeTab }) {
             continue;
           }
 
-          const { data: signed, error: urlError } = await supabase.storage
-            .from("repair-photos")
-            .createSignedUrl(filePath, 60 * 60 * 24 * 365);
+          const { data: signed, error: urlError } = await withAuthRetry(() =>
+            supabase.storage
+              .from("repair-photos")
+              .createSignedUrl(filePath, 60 * 60 * 24 * 365)
+          );
 
           if (!urlError && signed?.signedUrl) {
             newRepairUrls.push(signed.signedUrl);
@@ -4230,18 +4238,20 @@ function DefectsPage({ activeTab }) {
       // Set closed_out timestamp when completing
       const closedOut = newLocked && !defect.closed_out ? new Date().toISOString() : defect.closed_out;
 
-      const { error: updateError } = await supabase
-        .from("defects")
-        .update({
-          status: newStatus,
-          actions_taken: state.actionsTaken,
-          repair_company: state.repairCompany,
-          photo_urls: updatedDefectPhotos,
-          repair_photos: updatedRepairPhotos,
-          locked: newLocked,
-          closed_out: closedOut,
-        })
-        .eq("id", id);
+      const { error: updateError } = await withAuthRetry(() =>
+        supabase
+          .from("defects")
+          .update({
+            status: newStatus,
+            actions_taken: state.actionsTaken,
+            repair_company: state.repairCompany,
+            photo_urls: updatedDefectPhotos,
+            repair_photos: updatedRepairPhotos,
+            locked: newLocked,
+            closed_out: closedOut,
+          })
+          .eq("id", id)
+      );
 
       if (updateError) throw updateError;
 
