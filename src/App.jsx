@@ -3878,6 +3878,40 @@ function DefectsPage({ activeTab }) {
     updateEditField(defectId, "newDefectFiles", filesArray);
   }
 
+  function getImageUploadMeta(file) {
+    const extensionFromName = (file?.name || "")
+      .split(".")
+      .pop()
+      ?.toLowerCase();
+
+    const extensionFromType = (file?.type || "")
+      .split("/")
+      .pop()
+      ?.toLowerCase();
+
+    const ext = extensionFromName || extensionFromType || "jpg";
+
+    const extToMime = {
+      jpg: "image/jpeg",
+      jpeg: "image/jpeg",
+      png: "image/png",
+      webp: "image/webp",
+      gif: "image/gif",
+      bmp: "image/bmp",
+      heic: "image/heic",
+      heif: "image/heif",
+      tif: "image/tiff",
+      tiff: "image/tiff",
+    };
+
+    const mime =
+      file?.type && file.type.startsWith("image/")
+        ? file.type
+        : extToMime[ext] || "image/jpeg";
+
+    return { ext, mime };
+  }
+
   async function handleDeleteDefectPhoto(defectId, photoUrl) {
     if (!window.confirm("Delete this photo?")) return;
     setEditState((prev) => ({
@@ -3993,21 +4027,29 @@ function DefectsPage({ activeTab }) {
         [id]: { ...prev[id], saving: true, error: "" },
       }));
 
+      const uploadErrors = [];
+
       // Upload new defect photos
       let newDefectUrls = [];
       if (state.newDefectFiles && state.newDefectFiles.length > 0) {
         for (let i = 0; i < state.newDefectFiles.length; i++) {
           const file = state.newDefectFiles[i];
-          const filePath = `${id}_defect_admin_${Date.now()}_${i}`;
+          const { ext, mime } = getImageUploadMeta(file);
+          const filePath = `${id}_defect_admin_${Date.now()}_${i}.${ext}`;
 
           const { error: uploadError } = await supabase.storage
             .from("defect-photos")
             .upload(filePath, file, {
-              contentType: file.type || "image/jpeg",
+              contentType: mime,
             });
 
           if (uploadError) {
             console.error("Defect photo upload error:", uploadError);
+            uploadErrors.push(
+              `Defect photo ${file?.name || i + 1}: ${
+                uploadError.message || "Upload failed"
+              }`
+            );
             continue;
           }
 
@@ -4035,16 +4077,22 @@ function DefectsPage({ activeTab }) {
       if (state.newFiles && state.newFiles.length > 0) {
         for (let i = 0; i < state.newFiles.length; i++) {
           const file = state.newFiles[i];
-          const filePath = `${id}_repair_admin_${Date.now()}_${i}`;
+          const { ext, mime } = getImageUploadMeta(file);
+          const filePath = `${id}_repair_admin_${Date.now()}_${i}.${ext}`;
 
           const { error: uploadError } = await supabase.storage
             .from("repair-photos")
             .upload(filePath, file, {
-              contentType: file.type || "image/jpeg",
+              contentType: mime,
             });
 
           if (uploadError) {
             console.error("Repair photo upload error:", uploadError);
+            uploadErrors.push(
+              `Repair photo ${file?.name || i + 1}: ${
+                uploadError.message || "Upload failed"
+              }`
+            );
             continue;
           }
 
@@ -4066,6 +4114,14 @@ function DefectsPage({ activeTab }) {
         newRepairUrls.length > 0
           ? [...existingRepairPhotos, ...newRepairUrls]
           : existingRepairPhotos;
+
+      const attemptedUploads =
+        (state.newDefectFiles?.length || 0) + (state.newFiles?.length || 0);
+      const successfulUploads = newDefectUrls.length + newRepairUrls.length;
+
+      if (attemptedUploads > 0 && successfulUploads === 0 && uploadErrors.length > 0) {
+        throw new Error(`No photos were uploaded. ${uploadErrors[0]}`);
+      }
 
       const newStatus = state.status || "Reported";
       const newLocked = newStatus === "Completed";
@@ -4158,7 +4214,15 @@ function DefectsPage({ activeTab }) {
         },
       }));
 
-      alert("Defect updated.");
+      if (uploadErrors.length > 0) {
+        alert(
+          `Defect updated, but some photos failed to upload:\n- ${uploadErrors
+            .slice(0, 3)
+            .join("\n- ")}${uploadErrors.length > 3 ? "\n- ..." : ""}`
+        );
+      } else {
+        alert("Defect updated.");
+      }
       // close the details panel after update
       setExpandedIds((prev) => prev.filter((x) => x !== id));
     } catch (err) {
