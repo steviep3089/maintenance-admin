@@ -3885,24 +3885,6 @@ function DefectsPage({ activeTab }) {
     }));
   }
 
-  function handleFilesChange(defectId, fileList) {
-    const filesArray = Array.from(fileList || []);
-    pendingUploadFilesRef.current[defectId] = {
-      ...(pendingUploadFilesRef.current[defectId] || {}),
-      newFiles: filesArray,
-    };
-    updateEditField(defectId, "newFiles", filesArray);
-  }
-
-  function handleDefectPhotosChange(defectId, fileList) {
-    const filesArray = Array.from(fileList || []);
-    pendingUploadFilesRef.current[defectId] = {
-      ...(pendingUploadFilesRef.current[defectId] || {}),
-      newDefectFiles: filesArray,
-    };
-    updateEditField(defectId, "newDefectFiles", filesArray);
-  }
-
   function getImageUploadMeta(file) {
     const extensionFromName = (file?.name || "")
       .split(".")
@@ -4054,6 +4036,133 @@ function DefectsPage({ activeTab }) {
       `${displayName}: Uploaded file but could not create an accessible URL (${urlError?.message || "Unknown error"})`
     );
     return null;
+  }
+
+  async function uploadPhotosImmediately(defect, fileList, mode) {
+    const filesArray = Array.from(fileList || []);
+    if (filesArray.length === 0) return;
+
+    const id = defect.id;
+    const isDefectMode = mode === "defect";
+    const stateKey = isDefectMode ? "newDefectFiles" : "newFiles";
+    const bucket = isDefectMode ? "defect-photos" : "repair-photos";
+    const columnName = isDefectMode ? "photo_urls" : "repair_photos";
+    const label = isDefectMode ? "Defect" : "Repair";
+
+    updateEditField(id, stateKey, filesArray);
+    pendingUploadFilesRef.current[id] = {
+      ...(pendingUploadFilesRef.current[id] || {}),
+      [stateKey]: filesArray,
+    };
+
+    setEditState((prev) => ({
+      ...prev,
+      [id]: {
+        ...(prev[id] || {}),
+        saving: true,
+        error: "",
+      },
+    }));
+
+    try {
+      const currentDefect = defects.find((item) => item.id === id) || defect;
+      const existingPhotos = Array.isArray(currentDefect[columnName])
+        ? currentDefect[columnName]
+        : [];
+
+      const uploadErrors = [];
+      const uploadedUrls = [];
+
+      for (let i = 0; i < filesArray.length; i += 1) {
+        const prepared = await normalizeImageForUpload(filesArray[i]);
+        const file = prepared.file;
+        const { ext, mime, displayName } = prepared;
+        const filePath = `${id}_${mode}_instant_${Date.now()}_${i}.${ext}`;
+
+        const { error: uploadError } = await withAuthRetry(() =>
+          supabase.storage
+            .from(bucket)
+            .upload(filePath, file, {
+              contentType: mime,
+            })
+        );
+
+        if (uploadError) {
+          uploadErrors.push(
+            `${label} photo ${displayName || file?.name || i + 1}: ${
+              uploadError.message || "Upload failed"
+            }`
+          );
+          continue;
+        }
+
+        const uploadedUrl = await resolveUploadedPhotoUrl(
+          bucket,
+          filePath,
+          `${label} photo ${displayName || file?.name || i + 1}`,
+          uploadErrors
+        );
+
+        if (uploadedUrl) {
+          uploadedUrls.push(uploadedUrl);
+        }
+      }
+
+      if (uploadedUrls.length === 0) {
+        throw new Error(uploadErrors[0] || `No ${mode} photos were uploaded.`);
+      }
+
+      const { error: updateError } = await withAuthRetry(() =>
+        supabase
+          .from("defects")
+          .update({
+            [columnName]: [...existingPhotos, ...uploadedUrls],
+          })
+          .eq("id", id)
+      );
+
+      if (updateError) throw updateError;
+
+      const { data: auth } = await supabase.auth.getUser();
+      const performer = auth?.user?.email ?? "Admin Portal";
+      await supabase.from("defect_activity").insert({
+        defect_id: id,
+        message: `Added ${uploadedUrls.length} ${mode} photo${
+          uploadedUrls.length > 1 ? "s" : ""
+        } via Admin Portal`,
+        performed_by: performer,
+      });
+
+      await loadActivity(id);
+      await loadDefects();
+
+      setEditState((prev) => ({
+        ...prev,
+        [id]: {
+          ...(prev[id] || {}),
+          [stateKey]: [],
+          saving: false,
+          error:
+            uploadErrors.length > 0
+              ? `Some photos failed to upload. ${uploadErrors[0]}`
+              : "",
+        },
+      }));
+
+      pendingUploadFilesRef.current[id] = {
+        ...(pendingUploadFilesRef.current[id] || {}),
+        [stateKey]: [],
+      };
+    } catch (err) {
+      setEditState((prev) => ({
+        ...prev,
+        [id]: {
+          ...(prev[id] || {}),
+          saving: false,
+          error: err.message || "Photo upload failed.",
+        },
+      }));
+    }
   }
 
   async function handleDeleteDefectPhoto(defectId, photoUrl) {
@@ -4844,9 +4953,10 @@ function DefectsPage({ activeTab }) {
                                       onClick={() => suppressResumeReload()}
                                       onChange={(e) => {
                                         suppressResumeReload();
-                                        handleDefectPhotosChange(
-                                          d.id,
-                                          e.target.files
+                                        void uploadPhotosImmediately(
+                                          d,
+                                          e.target.files,
+                                          "defect"
                                         );
                                         // Allow selecting the same file again on desktop browsers.
                                         e.target.value = "";
@@ -4959,9 +5069,10 @@ function DefectsPage({ activeTab }) {
                                       onClick={() => suppressResumeReload()}
                                       onChange={(e) => {
                                         suppressResumeReload();
-                                        handleFilesChange(
-                                          d.id,
-                                          e.target.files
+                                        void uploadPhotosImmediately(
+                                          d,
+                                          e.target.files,
+                                          "repair"
                                         );
                                         // Allow selecting the same file again on desktop browsers.
                                         e.target.value = "";
