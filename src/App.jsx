@@ -4160,7 +4160,7 @@ function DefectsPage({ activeTab }) {
         ? state.newFiles
         : (pendingSelection.newFiles || []);
 
-    console.info("[photo-upload] selected files", {
+    console.log("[photo-upload] selected files", {
       defectId: id,
       defectPhotos: selectedDefectFiles.length,
       repairPhotos: selectedRepairFiles.length,
@@ -4276,12 +4276,16 @@ function DefectsPage({ activeTab }) {
         selectedDefectFiles.length + selectedRepairFiles.length;
       const successfulUploads = newDefectUrls.length + newRepairUrls.length;
 
-      console.info("[photo-upload] upload result", {
+      console.log("[photo-upload] upload result", {
         defectId: id,
         attemptedUploads,
         successfulUploads,
         errorCount: uploadErrors.length,
       });
+
+      if (attemptedUploads === 0) {
+        console.warn("[photo-upload] no files queued at submit", { defectId: id });
+      }
 
       if (attemptedUploads > 0 && successfulUploads === 0 && uploadErrors.length > 0) {
         throw new Error(`No photos were uploaded. ${uploadErrors[0]}`);
@@ -4639,6 +4643,15 @@ function DefectsPage({ activeTab }) {
                   const statusColour = STATUS_COLOURS[d.status] || "#6b7280";
                   const isExpanded = expandedIds.includes(d.id);
                   const edit = editState[d.id] || {};
+                  const pendingSelection = pendingUploadFilesRef.current[d.id] || {};
+                  const queuedDefectCount = Math.max(
+                    edit.newDefectFiles?.length || 0,
+                    pendingSelection.newDefectFiles?.length || 0
+                  );
+                  const queuedRepairCount = Math.max(
+                    edit.newFiles?.length || 0,
+                    pendingSelection.newFiles?.length || 0
+                  );
                   const logs = activityLogs[d.id];
                   const driveFileUrl = d.drive_file_url || (
                     d.drive_file_id
@@ -5021,6 +5034,16 @@ function DefectsPage({ activeTab }) {
                                   justifyContent: "flex-start",
                                 }}
                               >
+                                <div
+                                  style={{
+                                    alignSelf: "center",
+                                    marginRight: 12,
+                                    fontSize: 13,
+                                    color: "#4b5563",
+                                  }}
+                                >
+                                  Queued uploads: {queuedDefectCount} defect, {queuedRepairCount} repair
+                                </div>
                                 <button
                                   onClick={() => handleUpdateDefect(d)}
                                   disabled={edit.saving}
