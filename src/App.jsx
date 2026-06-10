@@ -3911,10 +3911,25 @@ function DefectsPage({ activeTab }) {
       tiff: "image/tiff",
     };
 
-    const mime =
-      file?.type && file.type.startsWith("image/")
-        ? file.type
+    const rawMime = file?.type || "";
+    const normalizedMime = rawMime.toLowerCase();
+
+    const jpegMimeAliases = new Set([
+      "image/jpeg",
+      "image/jpg",
+      "image/pjpeg",
+      "image/x-jpg",
+      "image/x-jpeg",
+    ]);
+
+    let mime =
+      rawMime && rawMime.startsWith("image/")
+        ? rawMime
         : extToMime[ext] || "image/jpeg";
+
+    if (jpegMimeAliases.has(normalizedMime) || ext === "jpg" || ext === "jpeg") {
+      mime = "image/jpeg";
+    }
 
     return { ext, mime };
   }
@@ -3942,8 +3957,15 @@ function DefectsPage({ activeTab }) {
       };
     }
 
+    const isAlreadyJpeg =
+      file.type === "image/jpeg" ||
+      file.type === "image/jpg" ||
+      file.type === "image/pjpeg" ||
+      file.type === "image/x-jpg" ||
+      file.type === "image/x-jpeg";
+
     const shouldConvertToJpeg =
-      file.type !== "image/jpeg" || file.size > 6 * 1024 * 1024;
+      !isAlreadyJpeg || file.size > 6 * 1024 * 1024;
 
     if (!shouldConvertToJpeg) {
       return {
