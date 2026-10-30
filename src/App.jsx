@@ -1,6 +1,13 @@
 // src/App.jsx
 import React, { useEffect, useRef, useState } from "react";
 import { supabase, SUPABASE_STORAGE_KEY } from "./supabaseClient";
+import {
+  MaintenanceAdminPanel,
+  MaintenanceLoginNotice,
+  MaintenanceScreen,
+} from "./MaintenanceMode";
+import { useMaintenanceStatus } from "./useMaintenanceStatus";
+import { shouldShowMaintenance } from "./maintenanceStatus";
 import "./App.css";
 import html2pdf from 'html2pdf.js';
 
@@ -3759,16 +3766,21 @@ function DefectsPage({ activeTab }) {
         driveResult?.webViewLink ||
         (driveFileId ? `https://drive.google.com/file/d/${driveFileId}/view` : "");
 
-      const { error: driveUpdateError } = await supabase
+      const { data: driveRows, error: driveUpdateError } = await supabase
         .from("defects")
         .update({
           drive_file_id: driveFileId || null,
           drive_file_url: driveFileUrl || null,
         })
-        .eq("id", defect.id);
+        .eq("id", defect.id)
+        .select("id");
 
       if (driveUpdateError) {
         throw driveUpdateError;
+      }
+      // RLS filters a blocked update to zero rows without an error.
+      if (!driveRows || driveRows.length === 0) {
+        throw new Error("The defect could not be updated. Maintenance may be in progress.");
       }
 
       await supabase.from("defect_activity").insert({
@@ -4108,16 +4120,20 @@ function DefectsPage({ activeTab }) {
         throw new Error(uploadErrors[0] || `No ${mode} photos were uploaded.`);
       }
 
-      const { error: updateError } = await withAuthRetry(() =>
+      const { data: photoRows, error: updateError } = await withAuthRetry(() =>
         supabase
           .from("defects")
           .update({
             [columnName]: [...existingPhotos, ...uploadedUrls],
           })
           .eq("id", id)
+          .select("id")
       );
 
       if (updateError) throw updateError;
+      if (!photoRows || photoRows.length === 0) {
+        throw new Error("The defect could not be updated. Maintenance may be in progress.");
+      }
 
       const { data: auth } = await supabase.auth.getUser();
       const performer = auth?.user?.email ?? "Admin Portal";
@@ -4176,10 +4192,16 @@ function DefectsPage({ activeTab }) {
       const updatedPhotos = (defect.photo_urls || []).filter(
         (url) => url !== photoUrl
       );
-      await supabase
+      const { data: deletedRows, error: deletePhotoError } = await supabase
         .from("defects")
         .update({ photo_urls: updatedPhotos })
-        .eq("id", defectId);
+        .eq("id", defectId)
+        .select("id");
+      if (deletePhotoError) throw deletePhotoError;
+      // Never remove the file unless the defect row was really updated.
+      if (!deletedRows || deletedRows.length === 0) {
+        throw new Error("The photo could not be removed. Maintenance may be in progress.");
+      }
       const photoPath = photoUrl.split("/defect-photos/")[1]?.split("?")[0];
       if (photoPath) {
         await supabase.storage.from("defect-photos").remove([photoPath]);
@@ -4228,10 +4250,15 @@ function DefectsPage({ activeTab }) {
       const updatedPhotos = (defect.repair_photos || []).filter(
         (url) => url !== photoUrl
       );
-      await supabase
+      const { data: deletedRows, error: deletePhotoError } = await supabase
         .from("defects")
         .update({ repair_photos: updatedPhotos })
-        .eq("id", defectId);
+        .eq("id", defectId)
+        .select("id");
+      if (deletePhotoError) throw deletePhotoError;
+      if (!deletedRows || deletedRows.length === 0) {
+        throw new Error("The photo could not be removed. Maintenance may be in progress.");
+      }
       const photoPath = photoUrl.split("/repair-photos/")[1]?.split("?")[0];
       if (photoPath) {
         await supabase.storage.from("repair-photos").remove([photoPath]);
@@ -4417,7 +4444,7 @@ function DefectsPage({ activeTab }) {
       // Set closed_out timestamp when completing
       const closedOut = newLocked && !defect.closed_out ? new Date().toISOString() : defect.closed_out;
 
-      const { error: updateError } = await withAuthRetry(() =>
+      const { data: savedRows, error: updateError } = await withAuthRetry(() =>
         supabase
           .from("defects")
           .update({
@@ -4430,9 +4457,13 @@ function DefectsPage({ activeTab }) {
             closed_out: closedOut,
           })
           .eq("id", id)
+          .select("id")
       );
 
       if (updateError) throw updateError;
+      if (!savedRows || savedRows.length === 0) {
+        throw new Error("Your changes could not be saved. Maintenance may be in progress.");
+      }
 
       const { data: auth } = await supabase.auth.getUser();
       const performer = auth?.user?.email ?? "Admin Portal";
@@ -5768,6 +5799,7 @@ export default function App() {
   const [accessDivisionNames, setAccessDivisionNames] = useState([]);
   const [view, setView] = useState("loading"); // "loading" | "login" | "reset" | "app"
   const [activeTab, setActiveTab] = useState("defects");
+  const maintenance = useMaintenanceStatus(supabase, session?.user?.id ?? null);
 
   async function loadDivisionNamesForSession(currentSession) {
     if (!currentSession?.user?.id) {
@@ -5963,7 +5995,12 @@ export default function App() {
   }
 
   if (!session || view === "login") {
-    return <LoginPage />;
+    return (
+      <>
+        <MaintenanceLoginNotice status={maintenance.status} />
+        <LoginPage />
+      </>
+    );
   }
 
   if (needsPasswordSetup(session)) {
@@ -5977,6 +6014,25 @@ export default function App() {
         onDone={() => {
           setView("login");
         }}
+      />
+    );
+  }
+
+  // Maintenance gate: applies to every signed-in user, including normal admins. Only the Super User
+  // passes. Wait for the first status check (it always settles, even offline) before showing the Portal.
+  if (!maintenance.checked) {
+    return (
+      <div className="app-root">
+        <div style={{ padding: 32 }}>Checking access...</div>
+      </div>
+    );
+  }
+  if (shouldShowMaintenance(maintenance)) {
+    return (
+      <MaintenanceScreen
+        status={maintenance.status}
+        connectionError={maintenance.connectionError}
+        onSignOut={() => supabase.auth.signOut()}
       />
     );
   }
@@ -6089,6 +6145,13 @@ export default function App() {
           </button>
         </div>
       </div>
+
+      <MaintenanceAdminPanel
+        client={supabase}
+        status={maintenance.status}
+        connectionError={maintenance.connectionError}
+        onChanged={maintenance.refresh}
+      />
 
       {/* Navigation Tabs */}
       <div style={{ 
