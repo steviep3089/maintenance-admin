@@ -29,3 +29,9 @@ dist-ssr
 # Supabase local CLI artifacts
 supabase/.temp/
 supabase/.branches/
+supabase-testing/supabase/.temp/
+.tmp/
+.tmp.apply_patch
+
+# Generated LIVE SQL (live-06 contains a personal email) - rebuild with scripts/maintenance-mode/build-live-scripts.mjs
+supabase/sql/live-generated/

@@ -1,8 +1,36 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { createMaintenanceAdminClient } from '../_shared/maintenance_admin_client.ts'
+import { enforceMaintenance } from '../_shared/maintenance_guard.ts'
+import { getAuthenticatedUser } from '../_shared/user_auth.ts'
 
-const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
-const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
+
+// Validates the caller's access token and requires the admin role (fail closed).
+async function authorizeAdmin(req: Request, supabase: any, corsHeaders: Record<string, string>) {
+  const deny = (status: number) =>
+    new Response(
+      JSON.stringify({ success: false, error: status === 401 ? 'Unauthorized' : 'Forbidden' }),
+      { status, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+    )
+
+  const user = await getAuthenticatedUser(req, supabase)
+  if (!user) return { userId: null, denied: deny(401) }
+
+  const { data: roleRow, error: roleError } = await supabase
+    .from('user_roles')
+    .select('role')
+    .eq('user_id', user.id)
+    .maybeSingle()
+  if (roleError) {
+    console.error('Caller role lookup failed:', roleError.message)
+    return { userId: null, denied: deny(403) }
+  }
+  if (roleRow?.role !== 'admin') return { userId: null, denied: deny(403) }
+
+  const blocked = await enforceMaintenance(supabase, user.id as string, corsHeaders)
+  if (blocked) return { userId: null, denied: blocked }
+
+  return { userId: user.id as string, denied: null }
+}
 
 serve(async (req) => {
   const corsHeaders = {
@@ -15,8 +43,11 @@ serve(async (req) => {
   }
 
   try {
-    // Use service_role to bypass RLS
-    const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
+    // Use the privileged server client only after verifying the caller is an admin.
+    const supabase = createMaintenanceAdminClient()
+
+    const auth = await authorizeAdmin(req, supabase, corsHeaders)
+    if (auth.denied) return auth.denied
 
     // Get all admin user IDs
     const { data: adminRoles, error: roleError } = await supabase
@@ -57,7 +88,7 @@ serve(async (req) => {
       console.warn("Admin user lookup failures:", failedLookups.length)
     }
 
-    console.log('Admin emails:', adminEmails)
+    console.log('Admin emails found:', adminEmails.length)
 
     return new Response(
       JSON.stringify({ success: true, adminEmails }),

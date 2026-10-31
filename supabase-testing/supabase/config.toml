@@ -1,0 +1,8 @@
+# Temporary validation endpoints for the isolated TESTING project only.
+# Keep the production functions untouched; HMAC verification remains in code.
+
+[functions.prodcheck-notify-defect]
+verify_jwt = false
+
+[functions.prodcheck-notify-expiring-invites]
+verify_jwt = false

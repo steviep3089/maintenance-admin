@@ -1,8 +1,9 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { createMaintenanceAdminClient } from '../_shared/maintenance_admin_client.ts'
+import { enforceMaintenance } from '../_shared/maintenance_guard.ts'
+import { getAuthenticatedUser } from '../_shared/user_auth.ts'
 
-const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
-const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 const GMAIL_USER = Deno.env.get("GMAIL_USER") || "";
 const GMAIL_APP_PASSWORD = Deno.env.get("GMAIL_APP_PASSWORD") || "";
 
@@ -147,6 +148,29 @@ serve(async (req) => {
   }
 
   try {
+    const maintenanceAdmin = createMaintenanceAdminClient();
+
+    const caller = await getAuthenticatedUser(req, maintenanceAdmin);
+
+    if (!caller) {
+      return new Response(
+        JSON.stringify({ success: false, error: "Unauthorized" }),
+        { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    const callerRole = await getUserRole(maintenanceAdmin, caller.id);
+    if (![("admin"), ("manager")].includes(callerRole)) {
+      return new Response(
+        JSON.stringify({ success: false, error: `Forbidden: admin or manager required. Current role: ${callerRole}.` }),
+        { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    const maintenanceBlock = await enforceMaintenance(maintenanceAdmin, caller.id, corsHeaders);
+    if (maintenanceBlock) return maintenanceBlock;
+
+    // Configuration and body validation only run for an authenticated, authorised, guard-approved caller.
     if (!CONTRACTS_SUPABASE_URL || !CONTRACTS_SERVICE_ROLE_KEY) {
       return new Response(
         JSON.stringify({
@@ -154,18 +178,6 @@ serve(async (req) => {
           error: "Missing contracts env vars. Set CONTRACTS_SUPABASE_URL and CONTRACTS_SERVICE_ROLE_KEY.",
         }),
         { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
-    }
-
-    const authHeader = req.headers.get("Authorization") || "";
-    const token = authHeader.toLowerCase().startsWith("bearer ")
-      ? authHeader.slice(7).trim()
-      : "";
-
-    if (!token) {
-      return new Response(
-        JSON.stringify({ success: false, error: "Missing bearer token." }),
-        { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
 
@@ -182,30 +194,6 @@ serve(async (req) => {
       return new Response(
         JSON.stringify({ success: false, error: "Email is required." }),
         { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
-    }
-
-    const maintenanceAdmin = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
-      auth: { autoRefreshToken: false, persistSession: false },
-    });
-
-    const {
-      data: { user: caller },
-      error: callerError,
-    } = await maintenanceAdmin.auth.getUser(token);
-
-    if (callerError || !caller?.id) {
-      return new Response(
-        JSON.stringify({ success: false, error: `Unauthorized: ${callerError?.message || "invalid token"}` }),
-        { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
-    }
-
-    const callerRole = await getUserRole(maintenanceAdmin, caller.id);
-    if (![("admin"), ("manager")].includes(callerRole)) {
-      return new Response(
-        JSON.stringify({ success: false, error: `Forbidden: admin or manager required. Current role: ${callerRole}.` }),
-        { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
 

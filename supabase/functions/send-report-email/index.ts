@@ -1,11 +1,11 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { createMaintenanceAdminClient } from '../_shared/maintenance_admin_client.ts'
+import { enforceMaintenance } from '../_shared/maintenance_guard.ts'
+import { getAuthenticatedUser } from '../_shared/user_auth.ts'
 
 const RESEND_API_KEY = Deno.env.get('RESEND_API_KEY')!
 const GMAIL_USER = Deno.env.get('GMAIL_USER')!
 const GMAIL_APP_PASSWORD = Deno.env.get('GMAIL_APP_PASSWORD')!
-const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
-const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
 
 // Gmail SMTP function for non-PDF emails (task assignments)
 async function sendViaGmail(to: string, subject: string, html: string) {
@@ -90,6 +90,37 @@ async function sendViaGmail(to: string, subject: string, html: string) {
   }
 }
 
+// Validates the caller's access token and requires the admin role (fail closed).
+async function authorizeAdmin(req: Request, supabase: any, corsHeaders: Record<string, string>) {
+  const deny = (status: number) =>
+    new Response(
+      JSON.stringify({ success: false, error: status === 401 ? 'Unauthorized' : 'Forbidden' }),
+      { status, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+    )
+
+  const user = await getAuthenticatedUser(req, supabase)
+  if (!user) return { userId: null, denied: deny(401) }
+
+  const { data: roleRow, error: roleError } = await supabase
+    .from('user_roles')
+    .select('role')
+    .eq('user_id', user.id)
+    .maybeSingle()
+  if (roleError) {
+    console.error('Caller role lookup failed:', roleError.message)
+    return { userId: null, denied: deny(403) }
+  }
+  if (roleRow?.role !== 'admin') return { userId: null, denied: deny(403) }
+
+  const blocked = await enforceMaintenance(supabase, user.id as string, corsHeaders)
+  if (blocked) return { userId: null, denied: blocked }
+
+  return { userId: user.id as string, denied: null }
+}
+
+const EMAIL_PATTERN = /^[^\s@<>"',;:\\]+@[^\s@<>"',;:\\]+\.[^\s@<>"',;:\\]+$/
+const MAX_PDF_BASE64_CHARS = 40_000_000
+
 serve(async (req) => {
   const corsHeaders = {
     'Access-Control-Allow-Origin': '*',
@@ -101,22 +132,40 @@ serve(async (req) => {
   }
 
   try {
+    const supabase = createMaintenanceAdminClient()
+
+    const auth = await authorizeAdmin(req, supabase, corsHeaders)
+    if (auth.denied) return auth.denied
+
     const { to, subject, html, pdfBase64, filename } = await req.json()
-    
-    console.log('Sending email to:', to, 'with PDF:', !!pdfBase64)
+
+    if (typeof to !== 'string' || !EMAIL_PATTERN.test(to)) {
+      throw new Error('A valid recipient email is required')
+    }
+    // Strip CR/LF so values cannot inject SMTP commands or headers
+    const safeSubject = typeof subject === 'string' ? subject.replace(/[\r\n]+/g, ' ').trim() : ''
+    if (!safeSubject) {
+      throw new Error('Invalid subject')
+    }
+    if (pdfBase64 && (typeof pdfBase64 !== 'string' || pdfBase64.length > MAX_PDF_BASE64_CHARS)) {
+      throw new Error('Invalid or oversized attachment')
+    }
+    const safeFilename = typeof filename === 'string' ? filename.replace(/[\r\n]+/g, ' ').trim() : undefined
+
+    console.log('Sending email with PDF:', !!pdfBase64)
 
     // Use Resend for PDF reports (admin only, fast & reliable for attachments)
     // Use Gmail SMTP for non-PDF emails (task assignments to any user)
-    if (pdfBase64 && filename) {
-      console.log('Using Resend API for PDF report, attachment:', filename, 'Size:', pdfBase64.length)
+    if (pdfBase64 && safeFilename) {
+      console.log('Using Resend API for PDF report, attachment:', safeFilename, 'Size:', pdfBase64.length)
       
       const emailPayload = {
         from: 'Maintenance Portal <onboarding@resend.dev>',
         to: [to],
-        subject: subject,
+        subject: safeSubject,
         html: html || '<p>Please see the attached PDF report.</p>',
         attachments: [{
-          filename: filename,
+          filename: safeFilename,
           content: pdfBase64
         }]
       }
@@ -147,7 +196,7 @@ serve(async (req) => {
     } else {
       // No PDF, use Gmail SMTP for task assignments
       console.log('Using Gmail SMTP for non-PDF email (task assignment)')
-      await sendViaGmail(to, subject, html)
+      await sendViaGmail(to, safeSubject, html)
       
       return new Response(
         JSON.stringify({ success: true, message: 'Email sent successfully via Gmail SMTP' }),

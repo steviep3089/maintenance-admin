@@ -1,8 +1,8 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { createMaintenanceAdminClient } from '../_shared/maintenance_admin_client.ts'
+import { enforceMaintenance } from '../_shared/maintenance_guard.ts'
+import { getAuthenticatedUser } from '../_shared/user_auth.ts'
 
-const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
-const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
 const GMAIL_USER = Deno.env.get('GMAIL_USER')!
 const GMAIL_APP_PASSWORD = Deno.env.get('GMAIL_APP_PASSWORD')!
 
@@ -76,6 +76,37 @@ async function sendViaGmail(to: string, subject: string, html: string) {
   }
 }
 
+// Validates the caller's access token and requires the admin role (fail closed).
+async function authorizeAdmin(req: Request, supabase: any, corsHeaders: Record<string, string>) {
+  const deny = (status: number) =>
+    new Response(
+      JSON.stringify({ success: false, error: status === 401 ? 'Unauthorized' : 'Forbidden' }),
+      { status, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+    )
+
+  const user = await getAuthenticatedUser(req, supabase)
+  if (!user) return { userId: null, denied: deny(401) }
+
+  const { data: roleRow, error: roleError } = await supabase
+    .from('user_roles')
+    .select('role')
+    .eq('user_id', user.id)
+    .maybeSingle()
+  if (roleError) {
+    console.error('Caller role lookup failed:', roleError.message)
+    return { userId: null, denied: deny(403) }
+  }
+  if (roleRow?.role !== 'admin') return { userId: null, denied: deny(403) }
+
+  const blocked = await enforceMaintenance(supabase, user.id as string, corsHeaders)
+  if (blocked) return { userId: null, denied: blocked }
+
+  return { userId: user.id as string, denied: null }
+}
+
+const EMAIL_PATTERN = /^[^\s@<>"',;:\\]+@[^\s@<>"',;:\\]+\.[^\s@<>"',;:\\]+$/
+const ALLOWED_ROLES = ['admin', 'manager', 'user']
+
 serve(async (req) => {
   const corsHeaders = {
     'Access-Control-Allow-Origin': '*',
@@ -87,18 +118,26 @@ serve(async (req) => {
   }
 
   try {
+    // Create the privileged server client only for an authorized admin caller.
+    const supabase = createMaintenanceAdminClient()
+
+    const auth = await authorizeAdmin(req, supabase, corsHeaders)
+    if (auth.denied) return auth.denied
+
     const { email, role, redirectTo, divisions = [], otherDivisionName = "" } = await req.json()
     const inviteSentAt = new Date().toISOString()
-    
-    console.log('Creating user:', email, 'with role:', role)
 
-    // Create Supabase admin client with service_role key
-    const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
-      auth: {
-        autoRefreshToken: false,
-        persistSession: false
-      }
-    })
+    if (typeof email !== 'string' || !EMAIL_PATTERN.test(email)) {
+      throw new Error('A valid email is required')
+    }
+    if (!ALLOWED_ROLES.includes(role)) {
+      throw new Error('Invalid role')
+    }
+    if (redirectTo !== undefined && redirectTo !== null && typeof redirectTo !== 'string') {
+      throw new Error('Invalid redirectTo')
+    }
+
+    console.log('Creating user with role:', role)
 
     const { data: linkData, error: authError } = await supabase.auth.admin.generateLink({
       type: "invite",

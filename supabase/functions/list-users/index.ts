@@ -1,8 +1,8 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { createMaintenanceAdminClient } from '../_shared/maintenance_admin_client.ts'
+import { enforceMaintenance } from '../_shared/maintenance_guard.ts'
+import { getAuthenticatedUser } from '../_shared/user_auth.ts'
 
-const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
-const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
 const CONTRACTS_SUPABASE_URL = Deno.env.get('CONTRACTS_SUPABASE_URL') || ''
 const CONTRACTS_SERVICE_ROLE_KEY = Deno.env.get('CONTRACTS_SERVICE_ROLE_KEY') || ''
 const CONTRACTS_LOOKUP_CONFIGURED = !!(CONTRACTS_SUPABASE_URL && CONTRACTS_SERVICE_ROLE_KEY)
@@ -131,14 +131,41 @@ serve(async (req) => {
     return new Response('ok', { headers: corsHeaders })
   }
 
-  try {
-    // Create Supabase admin client with service_role key
-    const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
-      auth: {
-        autoRefreshToken: false,
-        persistSession: false
-      }
+  const jsonResponse = (status: number, body: Record<string, unknown>) =>
+    new Response(JSON.stringify(body), {
+      status,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
     })
+
+  try {
+    // Admin client; no data is read with it until the caller is authorised
+    const supabase = createMaintenanceAdminClient()
+
+    // Validate the access token with Supabase Auth (works for HS256 and asymmetric signing keys)
+    const caller = await getAuthenticatedUser(req, supabase)
+
+    if (!caller) {
+      return jsonResponse(401, { success: false, error: 'Unauthorized' })
+    }
+
+    // Fail closed: any lookup error or missing/non-admin role is denied
+    const { data: callerRoleRow, error: callerRoleError } = await supabase
+      .from('user_roles')
+      .select('role')
+      .eq('user_id', caller.id)
+      .maybeSingle()
+
+    if (callerRoleError) {
+      console.error('Caller role lookup failed:', callerRoleError.message)
+      return jsonResponse(403, { success: false, error: 'Forbidden' })
+    }
+
+    if (callerRoleRow?.role !== 'admin') {
+      return jsonResponse(403, { success: false, error: 'Forbidden' })
+    }
+
+    const maintenanceBlock = await enforceMaintenance(supabase, caller.id, corsHeaders)
+    if (maintenanceBlock) return maintenanceBlock
 
     // Get all users
     const { data: authData, error: authError } = await supabase.auth.admin.listUsers()
@@ -227,12 +254,6 @@ serve(async (req) => {
 
   } catch (error) {
     console.error('Exception:', error)
-    return new Response(
-      JSON.stringify({ 
-        success: false,
-        error: error.message || 'Unknown error'
-      }),
-      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-    )
+    return jsonResponse(500, { success: false, error: 'Internal server error' })
   }
 })

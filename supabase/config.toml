@@ -1,0 +1,39 @@
+# Supabase Edge Functions configuration (LIVE project zebksrihswwwlejdiboq is the only deploy target; see docs/DEPLOYMENT.md).
+#
+# The gateway default is verify_jwt=true. verify_jwt=false is set ONLY for the ten functions below, and ONLY because
+# each one authenticates the caller inside its handler:
+#  (a) notify-defect and notify-expiring-invites verify an HMAC-SHA256 signed request (_shared/signed_request.ts);
+#  (b) the eight admin functions verify the user's access token with Supabase Auth (_shared/user_auth.ts
+#      getAuthenticatedUser), then check the role (user_roles) and Maintenance Mode. The gateway's legacy
+#      verify_jwt check cannot validate tokens signed with the asymmetric (ES256) signing keys.
+# A publishable/anon/service key never authorises anything. Do not add other functions here without review.
+
+[functions.notify-defect]
+verify_jwt = false
+
+[functions.notify-expiring-invites]
+verify_jwt = false
+
+[functions.create-user]
+verify_jwt = false
+
+[functions.delete-user]
+verify_jwt = false
+
+[functions.get-admin-users]
+verify_jwt = false
+
+[functions.list-users]
+verify_jwt = false
+
+[functions.resend-invite]
+verify_jwt = false
+
+[functions.send-report-email]
+verify_jwt = false
+
+[functions.upload-drive]
+verify_jwt = false
+
+[functions.invite-contracts-portal]
+verify_jwt = false

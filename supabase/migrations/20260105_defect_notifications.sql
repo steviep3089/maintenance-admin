@@ -1,3 +1,7 @@
+-- NOTE: the Authorization header below was REDACTED. This historical migration originally embedded a LIVE
+-- service_role JWT (now retired/exposed; it remains in Git history). It is superseded by the HMAC-signed
+-- notify_defect_created() in supabase/sql/notifications/. Do NOT run this file; it is kept only as migration history.
+
 -- Enable pg_net extension for HTTP requests
 CREATE EXTENSION IF NOT EXISTS pg_net;
 
@@ -12,7 +16,7 @@ BEGIN
     url := 'https://zebksrihswwwlejdiboq.supabase.co/functions/v1/notify-defect',
     headers := jsonb_build_object(
       'Content-Type', 'application/json',
-      'Authorization', 'Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InplYmtzcmloc3d3d2xlamRpYm9xIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc2NTI4NjYwMCwiZXhwIjoyMDgwODYyNjAwfQ.N6iD3KJze3q_ooxHVyc-ld22aNZdra6lntNZTJ6a2oo'
+      'Authorization', 'REDACTED'
     ),
     body := jsonb_build_object(
       'id', NEW.id,

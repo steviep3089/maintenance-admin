@@ -1,0 +1,84 @@
+-- HELD: Maintenance Mode write enforcement. DO NOT APPLY.
+--
+-- Status: not enabled, and deliberately outside supabase/migrations so `supabase db push`
+-- cannot pick it up.
+-- Prerequisites before this file may be promoted:
+--   1. 20261030_maintenance_mode_setting.sql applied and verified in TESTING.
+--   2. scripts/maintenance-mode/policy-inventory.sql run read-only in TESTING and reviewed.
+--   3. The statements below rewritten against the real policy/grant/bucket inventory.
+--
+-- Intended behaviour: while maintenance is enabled, only the Super User may write. RESTRICTIVE policies
+-- are AND-ed with every existing permissive policy, so they can only remove access, never add it.
+-- The Super User (public.maintenance_super_user) is the ONLY bypass. Admin role and the maintenance
+-- password never bypass, matching the Portal and mobile gates.
+-- They must NOT be added to: the auth schema, user_roles, maintenance_* tables, or notification
+-- dedup/log tables (admin recovery and notifications must
+-- keep working; the notification Edge Functions use the secret key and bypass RLS regardless).
+--
+-- Interaction to review: SECURITY DEFINER helpers run as their owner and are not affected by the
+-- invoking user's RLS, but any code path that writes defects/defect_activity as the *invoker*
+-- (including the mobile photo-URL update after insert) will be blocked while maintenance is on.
+
+-- Read-only helper. The Super User is never blocked; everyone else is blocked only while enabled.
+-- create or replace function public.maintenance_blocks_writes()
+-- returns boolean
+-- language sql
+-- stable
+-- security definer
+-- set search_path = ''
+-- as $$
+--   select coalesce((select m.enabled from public.maintenance_mode m where m.id = true), false)
+--          and not exists (
+--            select 1 from public.maintenance_super_user su
+--            where su.user_id = auth.uid()
+--          );
+-- $$;
+-- revoke all on function public.maintenance_blocks_writes() from public;
+-- grant execute on function public.maintenance_blocks_writes() to anon, authenticated;
+
+-- DRAFT POLICIES (commented out). Written to be additive-safe: RESTRICTIVE policies are AND-ed with every
+-- existing permissive policy, so while maintenance is OFF the helper returns false and nothing changes.
+-- Before promoting, confirm against the inventory that: (a) both buckets exist, (b) no existing policy
+-- relies on a role other than anon/authenticated, (c) no SECURITY DEFINER function listed as
+-- touches_target_tables is callable by authenticated and writes these tables on a user's behalf
+-- (such a function would bypass these policies and needs its own maintenance_blocks_writes() check).
+--
+-- create policy maintenance_block_defects_insert on public.defects
+--   as restrictive for insert to anon, authenticated with check (not public.maintenance_blocks_writes());
+-- create policy maintenance_block_defects_update on public.defects
+--   as restrictive for update to anon, authenticated using (not public.maintenance_blocks_writes())
+--   with check (not public.maintenance_blocks_writes());
+-- create policy maintenance_block_defects_delete on public.defects
+--   as restrictive for delete to anon, authenticated using (not public.maintenance_blocks_writes());
+--
+-- create policy maintenance_block_defect_activity_insert on public.defect_activity
+--   as restrictive for insert to anon, authenticated with check (not public.maintenance_blocks_writes());
+-- create policy maintenance_block_defect_activity_update on public.defect_activity
+--   as restrictive for update to anon, authenticated using (not public.maintenance_blocks_writes())
+--   with check (not public.maintenance_blocks_writes());
+-- create policy maintenance_block_defect_activity_delete on public.defect_activity
+--   as restrictive for delete to anon, authenticated using (not public.maintenance_blocks_writes());
+--
+-- Photo buckets: only these two buckets are restricted; every other bucket is untouched.
+-- create policy maintenance_block_photo_objects_insert on storage.objects
+--   as restrictive for insert to anon, authenticated
+--   with check (bucket_id not in ('defect-photos','repair-photos') or not public.maintenance_blocks_writes());
+-- create policy maintenance_block_photo_objects_update on storage.objects
+--   as restrictive for update to anon, authenticated
+--   using (bucket_id not in ('defect-photos','repair-photos') or not public.maintenance_blocks_writes())
+--   with check (bucket_id not in ('defect-photos','repair-photos') or not public.maintenance_blocks_writes());
+-- create policy maintenance_block_photo_objects_delete on storage.objects
+--   as restrictive for delete to anon, authenticated
+--   using (bucket_id not in ('defect-photos','repair-photos') or not public.maintenance_blocks_writes());
+--
+-- Reads (SELECT) are deliberately NOT restricted: signed URLs and the maintenance screen keep working.
+-- Not restricted either: auth, password reset, user_roles, maintenance_* tables, notification dedup/log
+-- tables. The Edge Functions use the secret key (bypasses RLS), so notifications and the digest are unaffected.
+-- Known side effect: a mobile upload-then-update sequence interrupted by switch-over leaves an orphaned
+-- photo; the user re-submits after recovery.
+--
+-- Post-apply check (TESTING, read-only): select policyname, permissive, cmd from pg_policies
+--   where policyname like 'maintenance_block_%' order by 1;  -- expect 9 rows, all RESTRICTIVE.
+--
+-- Rollback (if ever applied): drop each maintenance_block_* policy (drop policy ... on ...), then
+-- drop function public.maintenance_blocks_writes().

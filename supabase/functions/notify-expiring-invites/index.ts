@@ -1,15 +1,35 @@
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2"
+import type { SupabaseClient } from "npm:@supabase/supabase-js@2"
+import { verifySignedRequest } from "../_shared/signed_request.ts"
+import { runNotificationOnce } from "../_shared/notification_dedup.ts"
+import { getNotificationSafety } from "../_shared/notification_safety.ts"
+import { escapeHtml } from "../_shared/html.ts"
+import { createNotificationAdminClient } from "../_shared/notification_supabase.ts"
+import { getNotificationSigningKey } from "../_shared/notification_signing_key.ts"
 
-const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!
-const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
 const GMAIL_USER = Deno.env.get("GMAIL_USER")!
 const GMAIL_APP_PASSWORD = Deno.env.get("GMAIL_APP_PASSWORD")!
 
 const INACTIVITY_TIMEOUT_MS = 60 * 24 * 60 * 60 * 1000
 const INACTIVITY_WARNING_DAYS = 10
 
+type DigestUser = {
+  id: string
+  email?: string | null
+  user_metadata?: Record<string, unknown> | null
+  invited_at?: string | null
+  created_at?: string | null
+  last_sign_in_at?: string | null
+}
+
 async function sendViaGmail(to: string, subject: string, html: string) {
+  if (
+    !/^[^\s<>@]+@[^\s<>@]+$/.test(to) ||
+    !/^[^\s<>@]+@[^\s<>@]+$/.test(GMAIL_USER) ||
+    /[\r\n]/.test(subject)
+  ) {
+    throw new Error('Invalid notification email header')
+  }
+
   const conn = await Deno.connectTls({
     hostname: "smtp.gmail.com",
     port: 465,
@@ -17,34 +37,58 @@ async function sendViaGmail(to: string, subject: string, html: string) {
 
   const encoder = new TextEncoder()
   const decoder = new TextDecoder()
+  let pending = ''
 
-  async function readLine(conn: Deno.TlsConn): Promise<string> {
-    const buf = new Uint8Array(1024)
-    const n = await conn.read(buf)
-    if (!n) return ""
-    return decoder.decode(buf.subarray(0, n)).trim()
+  async function writeBytes(bytes: Uint8Array) {
+    let offset = 0
+    while (offset < bytes.length) {
+      const count = await conn.write(bytes.subarray(offset))
+      if (count === 0) throw new Error("SMTP connection closed")
+      offset += count
+    }
   }
 
-  async function writeLine(conn: Deno.TlsConn, line: string) {
-    await conn.write(encoder.encode(line + "\r\n"))
+  async function readResponse(expectedCodes: string[]) {
+    const lines: string[] = []
+    while (true) {
+      const lineEnd = pending.indexOf("\r\n")
+      if (lineEnd >= 0) {
+        const line = pending.slice(0, lineEnd)
+        pending = pending.slice(lineEnd + 2)
+        lines.push(line)
+
+        const match = /^(\d{3})([ -])/.exec(line)
+        if (!match) throw new Error("Invalid SMTP response")
+        if (match[2] === " ") {
+          if (!expectedCodes.includes(match[1])) {
+            throw new Error("SMTP command rejected")
+          }
+          return lines.join("\n")
+        }
+        continue
+      }
+
+      const buffer = new Uint8Array(1024)
+      const count = await conn.read(buffer)
+      if (count === null || count === 0) throw new Error("SMTP connection closed")
+      pending += decoder.decode(buffer.subarray(0, count))
+    }
+  }
+
+  async function sendCommand(command: string, expectedCodes: string[]) {
+    await writeBytes(encoder.encode(`${command}\r\n`))
+    return await readResponse(expectedCodes)
   }
 
   try {
-    await readLine(conn)
-    await writeLine(conn, "EHLO maintenance-portal")
-    await readLine(conn)
-    await writeLine(conn, "AUTH LOGIN")
-    await readLine(conn)
-    await writeLine(conn, btoa(GMAIL_USER))
-    await readLine(conn)
-    await writeLine(conn, btoa(GMAIL_APP_PASSWORD))
-    await readLine(conn)
-    await writeLine(conn, `MAIL FROM:<${GMAIL_USER}>`)
-    await readLine(conn)
-    await writeLine(conn, `RCPT TO:<${to}>`)
-    await readLine(conn)
-    await writeLine(conn, "DATA")
-    await readLine(conn)
+    await readResponse(["220"])
+    await sendCommand("EHLO maintenance-portal", ["250"])
+    await sendCommand("AUTH LOGIN", ["334"])
+    await sendCommand(btoa(GMAIL_USER), ["334"])
+    await sendCommand(btoa(GMAIL_APP_PASSWORD), ["235"])
+    await sendCommand(`MAIL FROM:<${GMAIL_USER}>`, ["250"])
+    await sendCommand(`RCPT TO:<${to}>`, ["250", "251"])
+    await sendCommand("DATA", ["354"])
 
     const emailContent = [
       `From: Sitebatch Maintenance <${GMAIL_USER}>`,
@@ -53,32 +97,31 @@ async function sendViaGmail(to: string, subject: string, html: string) {
       "Content-Type: text/html; charset=utf-8",
       "",
       html,
-      ".",
     ].join("\r\n")
 
-    await conn.write(encoder.encode(emailContent + "\r\n"))
-    await readLine(conn)
-
-    await writeLine(conn, "QUIT")
-    await readLine(conn)
-
+    const dotStuffedContent = emailContent.replace(/(^|\r\n)\./g, '$1..')
+    await writeBytes(encoder.encode(`${dotStuffedContent}\r\n.\r\n`))
+    await readResponse(["250"])
+    await sendCommand("QUIT", ["221"])
+  } finally {
     conn.close()
-  } catch (error) {
-    conn.close()
-    throw error
   }
 }
 
-function parseInviteSentAt(user: any) {
-  const raw = user?.user_metadata?.invite_sent_at || user?.invited_at || user?.created_at
+function parseInviteSentAt(user: DigestUser) {
+  const metadataDate = user.user_metadata?.invite_sent_at
+  const raw =
+    (typeof metadataDate === 'string' ? metadataDate : null) ||
+    user.invited_at ||
+    user.created_at
   if (!raw) return null
   const ms = Date.parse(raw)
   if (Number.isNaN(ms)) return null
   return new Date(ms)
 }
 
-function parseActivityAnchor(user: any) {
-  const raw = user?.last_sign_in_at || user?.created_at
+function parseActivityAnchor(user: DigestUser) {
+  const raw = user.last_sign_in_at || user.created_at
   if (!raw) return null
   const ms = Date.parse(raw)
   if (Number.isNaN(ms)) return null
@@ -93,11 +136,22 @@ function endOfUtcDay(d: Date) {
   return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), 23, 59, 59, 999))
 }
 
-function getErrorMessage(error: unknown) {
-  if (error instanceof Error) {
-    return error.message
+async function deactivateUsers(
+  supabase: SupabaseClient,
+  users: DigestUser[],
+  now: Date,
+) {
+  for (const user of users) {
+    const { error } = await supabase.auth.admin.updateUserById(user.id, {
+      ban_duration: "876000h",
+      user_metadata: {
+        ...(user.user_metadata || {}),
+        inactive_due_to_non_usage: true,
+        inactive_marked_at: now.toISOString(),
+      },
+    })
+    if (error) throw new Error('User deactivation failed')
   }
-  return "Unknown error"
 }
 
 type DigestRunLog = {
@@ -112,7 +166,7 @@ type DigestRunLog = {
   details?: Record<string, unknown>
 }
 
-async function logDigestRun(supabase: ReturnType<typeof createClient>, log: DigestRunLog) {
+async function logDigestRun(supabase: SupabaseClient, log: DigestRunLog) {
   const recipients = log.recipients || []
 
   const { error } = await supabase.from("invite_digest_runs").insert({
@@ -129,29 +183,96 @@ async function logDigestRun(supabase: ReturnType<typeof createClient>, log: Dige
   })
 
   if (error) {
-    console.error("Failed to write invite digest audit log:", error)
+    console.error("Failed to write invite digest audit log")
+    throw new Error("Digest audit logging failed")
   }
 }
 
-serve(async (req) => {
+const SIGNING_KEY = getNotificationSigningKey(
+  Deno.env.get('INVITE_DIGEST_SIGNING_KEY'),
+  Deno.env.get('INVITE_DIGEST_SECRET'),
+)
+
+Deno.serve(async (req: Request) => {
   const corsHeaders = {
     "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+    "Access-Control-Allow-Headers": "content-type, x-request-id, x-timestamp, x-signature",
   }
 
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders })
   }
 
-  let supabase: ReturnType<typeof createClient> | null = null
-
   try {
-    supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
-      auth: {
-        autoRefreshToken: false,
-        persistSession: false,
-      },
+    if (!SIGNING_KEY) {
+      console.error("INVITE_DIGEST_SIGNING_KEY is not configured; rejecting request")
+      return new Response(
+        JSON.stringify({ success: false, error: "Service unavailable" }),
+        { status: 503, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      )
+    }
+
+    const auth = await verifySignedRequest(req, {
+      signingKey: SIGNING_KEY,
+      expectedPathAndQuery: '/functions/v1/notify-expiring-invites',
+      expectedRuntimePathAndQuery: '/notify-expiring-invites',
     })
+    if (!auth.ok) {
+      const body = await auth.denied.text()
+      return new Response(body, {
+        status: auth.denied.status,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      })
+    }
+
+    let supabase: SupabaseClient
+    try {
+      supabase = createNotificationAdminClient()
+    } catch {
+      console.error("Notification database credentials are not configured")
+      return new Response(
+        JSON.stringify({ success: false, error: "Service unavailable" }),
+        { status: 503, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      )
+    }
+
+    let parsedBody: unknown
+    try {
+      parsedBody = JSON.parse(auth.verified.bodyText)
+    } catch {
+      return new Response(
+        JSON.stringify({ success: false, error: "Invalid request body" }),
+        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      )
+    }
+    if (!parsedBody || typeof parsedBody !== 'object' || Array.isArray(parsedBody)) {
+      return new Response(
+        JSON.stringify({ success: false, error: "Invalid request body" }),
+        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      )
+    }
+    const requestBody = parsedBody as Record<string, unknown>
+    if (
+      (requestBody.dryRun !== undefined && typeof requestBody.dryRun !== 'boolean') ||
+      (requestBody.allowDeactivation !== undefined &&
+        typeof requestBody.allowDeactivation !== 'boolean')
+    ) {
+      return new Response(
+        JSON.stringify({ success: false, error: "Invalid request body" }),
+        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      )
+    }
+
+    const safety = getNotificationSafety({
+      allowDryRun: Deno.env.get('ALLOW_DRY_RUN'),
+      notificationsDryRun: Deno.env.get('NOTIFICATIONS_DRY_RUN'),
+      allowUserDeactivation: Deno.env.get('ALLOW_USER_DEACTIVATION'),
+    }, requestBody)
+    const processing = await runNotificationOnce(
+      supabase,
+      'notify-expiring-invites',
+      auth.verified.requestId,
+      async () => {
 
     const { data: authData, error: usersError } = await supabase.auth.admin.listUsers()
     if (usersError) {
@@ -202,15 +323,14 @@ serve(async (req) => {
       return nowMs >= anchor.getTime() + INACTIVITY_TIMEOUT_MS
     })
 
-    for (const user of usersToDeactivate) {
-      await supabase.auth.admin.updateUserById(user.id, {
-        ban_duration: "876000h",
-        user_metadata: {
-          ...(user.user_metadata || {}),
-          inactive_due_to_non_usage: true,
-          inactive_marked_at: now.toISOString(),
-        },
-      })
+    if (safety.allowDeactivation) {
+      await deactivateUsers(supabase, usersToDeactivate, now)
+    }
+
+    if (!safety.allowDeactivation && usersToDeactivate.length > 0) {
+      console.warn(
+        `Dry run / deactivation disabled; skipping ${usersToDeactivate.length} deactivation(s)`,
+      )
     }
 
     const inactiveSoon = allUsers.filter((user) => {
@@ -265,6 +385,7 @@ serve(async (req) => {
     const adminEmails = (authData?.users || [])
       .filter((user) => adminUserIdSet.has(user.id) && user.email)
       .map((user) => user.email)
+      .filter((email): email is string => typeof email === 'string')
 
     if (adminEmails.length === 0) {
       await logDigestRun(supabase, {
@@ -289,7 +410,7 @@ serve(async (req) => {
         const expiresAt = inviteSentAt
           ? new Date(inviteSentAt.getTime() + 24 * 60 * 60 * 1000).toISOString()
           : "Unknown"
-        return `<li><strong>${user.email}</strong> - expires: ${expiresAt}</li>`
+        return `<li><strong>${escapeHtml(user.email)}</strong> - expires: ${expiresAt}</li>`
       })
       .join("")
 
@@ -299,7 +420,7 @@ serve(async (req) => {
         const expiredAt = inviteSentAt
           ? new Date(inviteSentAt.getTime() + 24 * 60 * 60 * 1000).toISOString()
           : "Unknown"
-        return `<li><strong>${user.email}</strong> - expired: ${expiredAt}</li>`
+        return `<li><strong>${escapeHtml(user.email)}</strong> - expired: ${expiredAt}</li>`
       })
       .join("")
 
@@ -312,7 +433,7 @@ serve(async (req) => {
         const daysRemaining = anchor
           ? Math.ceil((new Date(inactiveAt).getTime() - nowMs) / (24 * 60 * 60 * 1000))
           : "Unknown"
-        return `<li><strong>${user.email}</strong> - inactive at: ${inactiveAt} (${daysRemaining} day(s) remaining)</li>`
+        return `<li><strong>${escapeHtml(user.email)}</strong> - inactive at: ${inactiveAt} (${daysRemaining} day(s) remaining)</li>`
       })
       .join("")
 
@@ -322,7 +443,7 @@ serve(async (req) => {
         const inactiveAt = anchor
           ? new Date(anchor.getTime() + INACTIVITY_TIMEOUT_MS).toISOString()
           : now.toISOString()
-        return `<li><strong>${user.email}</strong> - deactivated at: ${inactiveAt}</li>`
+        return `<li><strong>${escapeHtml(user.email)}</strong> - deactivated at: ${inactiveAt}</li>`
       })
       .join("")
 
@@ -337,20 +458,29 @@ serve(async (req) => {
       </div>
     `
 
-    await Promise.all(
-      adminEmails.map((email) =>
-        sendViaGmail(email, "Invite expiry reminder", html)
+    if (safety.dryRun) {
+      console.warn('Dry run enabled; skipping digest emails')
+    } else {
+      await Promise.all(
+        adminEmails.map((email) =>
+          sendViaGmail(email, "Invite expiry reminder", html)
+        )
       )
-    )
+    }
 
     await logDigestRun(supabase, {
       success: true,
-      reason: "Digest email sent",
-      recipients: adminEmails,
+      reason: safety.dryRun ? "Dry run: digest suppressed" : "Digest email sent",
+      recipients: safety.dryRun ? [] : adminEmails,
       invitesExpiringToday: inviteExpiringToday.length,
       invitesExpiredPending: inviteExpiredPending.length,
       inactiveSoon: inactiveSoon.length,
-      deactivated: usersToDeactivate.length,
+      deactivated: safety.allowDeactivation ? usersToDeactivate.length : 0,
+      details: {
+        dryRun: safety.dryRun,
+        deactivationEnabled: safety.allowDeactivation,
+        wouldDeactivate: usersToDeactivate.length,
+      },
     })
 
     return new Response(
@@ -360,24 +490,48 @@ serve(async (req) => {
         invitesExpiringToday: inviteExpiringToday.length,
         invitesExpiredPending: inviteExpiredPending.length,
         inactiveSoon: inactiveSoon.length,
-        deactivated: usersToDeactivate.length,
+        deactivated: safety.allowDeactivation ? usersToDeactivate.length : 0,
+        dryRun: safety.dryRun,
+        deactivationEnabled: safety.allowDeactivation,
+        wouldDeactivate: usersToDeactivate.length,
       }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } }
     )
-  } catch (error) {
-    console.error("notify-expiring-invites exception:", error)
+      },
+    )
 
-    if (supabase) {
+    if (processing.kind === 'duplicate') {
+      return new Response(
+        JSON.stringify({ success: true, duplicate: true }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      )
+    }
+    if (processing.kind === 'database-error') {
+      console.error("Notification request state could not be updated")
+      return new Response(
+        JSON.stringify({ success: false, error: "Service unavailable" }),
+        { status: 503, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      )
+    }
+    if (processing.kind === 'processing-error') {
+      console.error("Invite digest processing failed")
       await logDigestRun(supabase, {
         success: false,
         reason: "Function execution failed",
         recipients: [],
-        error: getErrorMessage(error),
+        error: "Notification processing failed",
       })
+      return new Response(
+        JSON.stringify({ success: false, error: "Notification processing failed" }),
+        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      )
     }
 
+    return processing.value
+  } catch {
+    console.error("notify-expiring-invites request failed")
     return new Response(
-      JSON.stringify({ success: false, error: getErrorMessage(error) }),
+      JSON.stringify({ success: false, error: "Internal server error" }),
       { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     )
   }
