@@ -8,6 +8,12 @@ import {
 } from "./MaintenanceMode";
 import { useMaintenanceStatus } from "./useMaintenanceStatus";
 import { shouldShowMaintenance } from "./maintenanceStatus";
+import {
+  MAINTENANCE_APP_URL,
+  OPEN_APP_LABEL,
+  DESKTOP_FALLBACK_MESSAGE,
+  isMobileDevice,
+} from "./openApp";
 import "./App.css";
 import html2pdf from 'html2pdf.js';
 
@@ -644,7 +650,8 @@ function ResetPasswordPage({ onDone, allowNonAdmin }) {
   if (showPostReset) {
     const portalLoginUrl =
       typeof window !== "undefined" ? window.location.origin : "/";
-    const appLoginUrl = "maintenanceapp://login";
+    const appLoginUrl = MAINTENANCE_APP_URL;
+    const onMobile = isMobileDevice();
     return (
       <div className="app-root">
         <div
@@ -664,23 +671,29 @@ function ResetPasswordPage({ onDone, allowNonAdmin }) {
           <p style={{ marginTop: -8, marginBottom: 16, color: "#9ca3af", fontSize: 12 }}>
             Build source: {buildOrigin}
           </p>
-          <a
-            href={appLoginUrl}
-            style={{
-              display: "inline-block",
-              width: "100%",
-              textAlign: "center",
-              padding: 10,
-              borderRadius: 999,
-              border: "none",
-              backgroundColor: "#1d4ed8",
-              color: "#ffffff",
-              fontWeight: 600,
-              textDecoration: "none",
-            }}
-          >
-            Open the Maintenance App
-          </a>
+          {onMobile ? (
+            <a
+              href={appLoginUrl}
+              style={{
+                display: "inline-block",
+                width: "100%",
+                textAlign: "center",
+                padding: 10,
+                borderRadius: 999,
+                border: "none",
+                backgroundColor: "#1d4ed8",
+                color: "#ffffff",
+                fontWeight: 600,
+                textDecoration: "none",
+              }}
+            >
+              {OPEN_APP_LABEL}
+            </a>
+          ) : (
+            <p style={{ margin: 0, color: "#374151", fontSize: 14 }}>
+              {DESKTOP_FALLBACK_MESSAGE}
+            </p>
+          )}
           <button
             type="button"
             onClick={() => {
