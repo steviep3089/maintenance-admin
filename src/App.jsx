@@ -17,6 +17,11 @@ import {
   ADMIN_PORTAL_LOGIN_LABEL,
   isMobileDevice,
 } from "./openApp";
+import {
+  markPasswordSetupSignOut,
+  clearPasswordSetupSignOut,
+  consumePasswordSetupSignOut,
+} from "./passwordSetupSignOut";
 import "./App.css";
 import html2pdf from 'html2pdf.js';
 
@@ -549,7 +554,12 @@ function ResetPasswordPage({ onDone, allowNonAdmin }) {
         }
       } catch (_) {}
 
-      await supabase.auth.signOut();
+      markPasswordSetupSignOut();
+      try {
+        await supabase.auth.signOut();
+      } finally {
+        clearPasswordSetupSignOut();
+      }
       if (typeof window !== "undefined") {
         sessionStorage.removeItem("force_password_change");
       }
@@ -610,7 +620,7 @@ function ResetPasswordPage({ onDone, allowNonAdmin }) {
   }
 
   // Non-admin users can't reset password via portal
-  if (!allowNonAdmin && userRole !== "admin") {
+  if (!showPostReset && !allowNonAdmin && userRole !== "admin") {
     return (
       <div className="app-root">
         <div
@@ -5941,6 +5951,14 @@ export default function App() {
           }
 
           if (event === "SIGNED_OUT") {
+            if (consumePasswordSetupSignOut()) {
+              // Intentional sign-out after password setup: keep the success screen.
+              setSession(null);
+              setRole(null);
+              setRoleLoading(false);
+              setAccessDivisionNames([]);
+              return;
+            }
             setSession(null);
             setRole(null);
             setRoleLoading(false);
