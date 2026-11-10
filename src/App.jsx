@@ -12,6 +12,9 @@ import {
   MAINTENANCE_APP_URL,
   OPEN_APP_LABEL,
   DESKTOP_FALLBACK_MESSAGE,
+  PASSWORD_SAVED_MESSAGE,
+  ADMIN_PORTAL_NOTE,
+  ADMIN_PORTAL_LOGIN_LABEL,
   isMobileDevice,
 } from "./openApp";
 import "./App.css";
@@ -666,7 +669,7 @@ function ResetPasswordPage({ onDone, allowNonAdmin }) {
         >
           <h1 style={{ marginBottom: 8 }}>Password Updated</h1>
           <p style={{ marginTop: 0, marginBottom: 20, color: "#6b7280" }}>
-            Your password is set. You can now sign in to the Maintenance App.
+            {PASSWORD_SAVED_MESSAGE}
           </p>
           <p style={{ marginTop: -8, marginBottom: 16, color: "#9ca3af", fontSize: 12 }}>
             Build source: {buildOrigin}
@@ -694,6 +697,9 @@ function ResetPasswordPage({ onDone, allowNonAdmin }) {
               {DESKTOP_FALLBACK_MESSAGE}
             </p>
           )}
+          <p style={{ marginTop: 20, marginBottom: 0, color: "#6b7280", fontSize: 13 }}>
+            {ADMIN_PORTAL_NOTE}
+          </p>
           <button
             type="button"
             onClick={() => {
@@ -714,7 +720,7 @@ function ResetPasswordPage({ onDone, allowNonAdmin }) {
               cursor: "pointer",
             }}
           >
-            Back to Portal Login
+            {ADMIN_PORTAL_LOGIN_LABEL}
           </button>
         </div>
       </div>
